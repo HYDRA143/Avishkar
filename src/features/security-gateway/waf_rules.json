@@ -1,1 +1,39 @@
-{"rules":[]}
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "sql-injection",
+      "action": "block",
+      "locations": ["query", "path", "body"],
+      "patterns": [
+        "(?i)(?:\\bunion\\s+(?:all\\s+)?select\\b)",
+        "(?i)(?:\\bselect\\b.+\\bfrom\\b)",
+        "(?i)(?:\\bor\\s+['\\\"]?1['\\\"]?\\s*=\\s*['\\\"]?1)",
+        "(?i)(?:\\b(drop|alter|truncate)\\s+table\\b)",
+        "(?i)(?:;\\s*(insert|update|delete|exec)\\b)"
+      ]
+    },
+    {
+      "id": "cross-site-scripting",
+      "action": "block",
+      "locations": ["query", "path", "body"],
+      "patterns": [
+        "(?i)(?:<script\\b[^>]*>)",
+        "(?i)(?:javascript\\s*:)",
+        "(?i)(?:on(?:error|load|click|mouseover)\\s*=)",
+        "(?i)(?:<iframe\\b[^>]*>)"
+      ]
+    },
+    {
+      "id": "path-traversal",
+      "action": "block",
+      "locations": ["query", "path"],
+      "patterns": [
+        "(?:\\.\\./|\\.\\\\\\\\)",
+        "(?i)(?:%2e%2e(?:%2f|%5c))",
+        "(?i)(?:%252e%252e(?:%252f|%255c))",
+        "(?i)(?:/etc/passwd|/proc/self/environ)"
+      ]
+    }
+  ]
+}
