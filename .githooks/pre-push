@@ -1,0 +1,7 @@
+#!/bin/bash
+# Non fast-forward push reject + keys wali file push reject
+if git diff --cached --name-only | grep -E "private_sign|public_verify|\.env|private.*key"; then
+  echo "BLOCKED: keys / env push nahi hoga"
+  exit 1
+fi
+exit 0

@@ -1,0 +1,9 @@
+services:
+  wifi-monitor:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.uno
+  key-vault:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.vault
