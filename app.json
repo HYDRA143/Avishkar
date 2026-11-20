@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "NetGuard",
+    "slug": "netguard",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "netguard",
+    "userInterfaceStyle": "automatic",
+    "platforms": ["android", "ios", "web"],
+    "android": {
+      "package": "com.netguard.app"
+    },
+    "ios": {
+      "bundleIdentifier": "com.netguard.app"
+    }
+  }
+}

@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 export interface Device {
   id: string;
   name: string;
@@ -87,30 +89,57 @@ const fetchJson = async (url: string, key: string, signal: AbortSignal): Promise
   return body;
 };
 
-export const useDeviceUsage = async (
+export const useDeviceUsage = (
   deviceId?: string,
-): Promise<DeviceUsageState> => {
-  const controller = new AbortController();
-  const { apiBaseUrl, apiKey } = getRuntimeConfig();
-  const initial: DeviceUsageState = { loading: true, devices: [], usage: [], error: null };
-  try {
-    if (!apiBaseUrl || !apiKey) {
-      throw new Error("Mobile API configuration is missing");
-    }
-    const base = apiBaseUrl.replace(/\/$/, "");
-    const usagePath = deviceId ? `/api/usage?deviceId=${encodeURIComponent(deviceId)}` : "/api/usage";
-    const [devicesBody, usageBody] = await Promise.all([
-      fetchJson(`${base}/api/devices`, apiKey, controller.signal),
-      fetchJson(`${base}${usagePath}`, apiKey, controller.signal),
-    ]);
-    return { loading: false, devices: parseDevices(devicesBody), usage: parseUsage(usageBody), error: null };
-  } catch (error) {
-    return {
-      ...initial,
-      loading: false,
-      error: error instanceof Error ? error.message : "Unable to load device usage",
+): DeviceUsageState => {
+  const [state, setState] = useState<DeviceUsageState>({
+    loading: true,
+    devices: [],
+    usage: [],
+    error: null,
+  });
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const load = async (): Promise<void> => {
+      setState({ loading: true, devices: [], usage: [], error: null });
+      const { apiBaseUrl, apiKey } = getRuntimeConfig();
+      try {
+        if (!apiBaseUrl || !apiKey) {
+          throw new Error("Mobile API configuration is missing");
+        }
+        const base = apiBaseUrl.replace(/\/$/, "");
+        const usagePath = deviceId
+          ? `/api/usage?deviceId=${encodeURIComponent(deviceId)}`
+          : "/api/usage";
+        const [devicesBody, usageBody] = await Promise.all([
+          fetchJson(`${base}/api/devices`, apiKey, controller.signal),
+          fetchJson(`${base}${usagePath}`, apiKey, controller.signal),
+        ]);
+        if (!controller.signal.aborted) {
+          setState({
+            loading: false,
+            devices: parseDevices(devicesBody),
+            usage: parseUsage(usageBody),
+            error: null,
+          });
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setState({
+            loading: false,
+            devices: [],
+            usage: [],
+            error: error instanceof Error ? error.message : "Unable to load device usage",
+          });
+        }
+      }
     };
-  } finally {
-    controller.abort();
-  }
+
+    void load();
+    return () => controller.abort();
+  }, [deviceId]);
+
+  return state;
 };
