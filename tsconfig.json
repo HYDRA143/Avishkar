@@ -10,5 +10,9 @@
     "allowJs": true,
     "skipLibCheck": true
   },
-  "include": ["api/**/*", "src/**/*"]
+  "include": [
+    "api/**/*",
+    "src/**/*"
+  ],
+  "extends": "expo/tsconfig.base"
 }
