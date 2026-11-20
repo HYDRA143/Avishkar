@@ -1,0 +1,7 @@
+src/features/
+src/cloud/
+src/mobile/
+src/shared/
+vault/
+*.py
+__pycache__/
