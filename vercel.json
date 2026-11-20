@@ -1,0 +1,9 @@
+{
+  "rewrites": [
+    { "source": "/api/check", "destination": "/api/check.ts" },
+    { "source": "/api/status", "destination": "/api/status.ts" },
+    { "source": "/api/devices", "destination": "/api/devices.ts" },
+    { "source": "/api/usage", "destination": "/api/usage.ts" },
+    { "source": "/api/report", "destination": "/api/report.ts" }
+  ]
+}
