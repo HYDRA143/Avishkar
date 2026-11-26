@@ -17,6 +17,7 @@ services:
       - WIFI_SCAN_INTERVAL_SECONDS=${WIFI_SCAN_INTERVAL_SECONDS:-30}
     volumes:
       - ../vault:/app/vault:ro
+      - /proc/device-tree:/proc/device-tree:ro
 
   key-vault:
     platform: linux/arm64
@@ -33,3 +34,13 @@ services:
       - VAULT_SYNC_INTERVAL_SECONDS=${VAULT_SYNC_INTERVAL_SECONDS:-60}
     volumes:
       - ../vault:/app/vault
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: netguard-cloudflared
+    restart: unless-stopped
+    command: tunnel --url http://host.docker.internal:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - wifi-monitor
