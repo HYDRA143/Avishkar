@@ -1,43 +1,14 @@
-async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,x-api-key,x-sim-signature,Authorization");
-  if (req.method === "OPTIONS") {
-    res.status(204).end();
-    return;
+export default async function handler(req, res) {
+  if (req.headers['x-api-key'] !== process.env.NETGUARD_API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
-    if (req.method !== "GET") {
-      res.status(400).json({ error: "GET is required" });
-      return;
-    }
-
-    if (!process.env.NETGUARD_API_KEY || req.headers?.["x-api-key"] !== process.env.NETGUARD_API_KEY) {
-      res.status(401).json({ error: "Invalid API key" });
-      return;
-    }
-
-    if (!process.env.NETGUARD_GATEWAY_URL || !process.env.NETGUARD_GATEWAY_TOKEN) {
-      res.status(503).json({ error: "Gateway not configured" });
-      return;
-    }
-
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(req.query ?? {})) {
-      if (typeof value === "string") {
-        query.set(key, value);
-      }
-    }
-    const suffix = query.toString() ? `?${query.toString()}` : "";
-    const response = await fetch(new URL(`/usage${suffix}`, process.env.NETGUARD_GATEWAY_URL), {
-      headers: { authorization: `Bearer ${process.env.NETGUARD_GATEWAY_TOKEN}` },
+    const r = await fetch(`${process.env.NETGUARD_GATEWAY_URL}/status`, {
+      headers: { 'x-api-key': process.env.NETGUARD_GATEWAY_TOKEN }
     });
-    const body = await response.json();
-    res.status(response.status).json(body);
-  } catch {
-    res.status(502).json({ error: "Gateway failed" });
-    return;
+    const data = await r.json();
+    return res.status(200).json(data.bandwidth);
+  } catch (e) {
+    return res.status(502).json({ error: 'Gateway failed' });
   }
 }
-
-module.exports = handler;
