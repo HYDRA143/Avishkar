@@ -39,7 +39,7 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: netguard-cloudflared
     restart: unless-stopped
-    command: tunnel --no-autoupdate --url http://host.docker.internal:8080
+    command: tunnel --url http://host.docker.internal:8080
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
