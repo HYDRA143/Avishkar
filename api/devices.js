@@ -1,20 +1,3 @@
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'x-api-key, Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  if (req.headers['x-api-key'] !== process.env.NETGUARD_API_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  try {
-    const r = await fetch(`${process.env.NETGUARD_GATEWAY_URL}/status`, {
-      headers: { 'x-api-key': process.env.NETGUARD_GATEWAY_TOKEN }
-    });
-    const data = await r.json();
-    return res.status(200).json(data.devices);
-  } catch (e) {
-    return res.status(502).json({ error: 'Gateway failed' });
-  }
-}
+function cors(res){ res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET, OPTIONS'); res.setHeader('Access-Control-Allow-Headers','x-api-key, Content-Type'); }
+function parseDevice(s){ const ip=s.match(/ip_address='([^']+)'/)?.[1]||''; const mac=s.match(/mac_address='([^']+)'/)?.[1]||''; const iface=s.match(/interface='([^']+)'/)?.[1]||''; const reach=s.includes('reachable=True'); return { ip_address: ip, mac_address: mac, interface: iface, reachable: reach, ip, mac }; }
+export default async function handler(req,res){ cors(res); if(req.method==='OPTIONS') return res.status(200).end(); if(req.headers['x-api-key']!==process.env.NETGUARD_API_KEY) return res.status(401).json({error:'Unauthorized'}); try{ const r=await fetch(`${process.env.NETGUARD_GATEWAY_URL}/status`,{headers:{'x-api-key':process.env.NETGUARD_GATEWAY_TOKEN}}); const data=await r.json(); const list=(data.devices?.devices||[]).map(parseDevice); return res.status(200).json({devices:list, message:null}); }catch(e){ return res.status(502).json({error:'Gateway failed'}); } }

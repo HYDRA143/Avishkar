@@ -1,35 +1,45 @@
 async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,x-api-key,x-sim-signature,Authorization");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
   if (req.method === "OPTIONS") {
-    res.status(204).end();
+    res.status(200).end();
     return;
   }
+  if (req.method !== "GET") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
+  const apiKey = process.env.NETGUARD_API_KEY;
+  if (!apiKey || req.headers?.["x-api-key"] !== apiKey) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const gatewayUrl = process.env.NETGUARD_GATEWAY_URL;
+  const gatewayToken = process.env.NETGUARD_GATEWAY_TOKEN;
+  if (!gatewayUrl || !gatewayToken) {
+    res.status(503).json({ error: "Gateway not configured" });
+    return;
+  }
+
   try {
-    if (req.method !== "GET") {
-      res.status(400).json({ error: "GET is required" });
-      return;
-    }
-
-    if (!process.env.NETGUARD_API_KEY || req.headers?.["x-api-key"] !== process.env.NETGUARD_API_KEY) {
-      res.status(401).json({ error: "Invalid API key" });
-      return;
-    }
-
-    if (!process.env.NETGUARD_GATEWAY_URL || !process.env.NETGUARD_GATEWAY_TOKEN) {
-      res.status(503).json({ error: "Gateway not configured" });
-      return;
-    }
-
-    const response = await fetch(new URL("/check", process.env.NETGUARD_GATEWAY_URL), {
-      headers: { authorization: `Bearer ${process.env.NETGUARD_GATEWAY_TOKEN}` },
+    const response = await fetch(new URL("/status", gatewayUrl), {
+      headers: { "x-api-key": gatewayToken },
     });
-    const body = await response.json();
-    res.status(response.status).json(body);
+    if (!response.ok) {
+      res.status(502).json({ error: "Gateway failed" });
+      return;
+    }
+    const data = await response.json();
+    if (typeof data !== "object" || data === null || Array.isArray(data)) {
+      res.status(502).json({ error: "Invalid gateway response" });
+      return;
+    }
+    res.status(200).json(data);
   } catch {
     res.status(502).json({ error: "Gateway failed" });
-    return;
   }
 }
 

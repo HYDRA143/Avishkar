@@ -1,20 +1,3 @@
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'x-api-key, Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  if (req.headers['x-api-key'] !== process.env.NETGUARD_API_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  try {
-    const r = await fetch(`${process.env.NETGUARD_GATEWAY_URL}/status`, {
-      headers: { 'x-api-key': process.env.NETGUARD_GATEWAY_TOKEN }
-    });
-    const data = await r.json();
-    return res.status(200).json(data.bandwidth);
-  } catch (e) {
-    return res.status(502).json({ error: 'Gateway failed' });
-  }
-}
+function cors(res){ res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET, OPTIONS'); res.setHeader('Access-Control-Allow-Headers','x-api-key, Content-Type'); }
+function parseBw(s){ const iface=s.match(/interface='([^']+)'/)?.[1]||''; const rx=Number(s.match(/received_bytes=(\d+)/)?.[1]||0); const tx=Number(s.match(/transmitted_bytes=(\d+)/)?.[1]||0); return { interface: iface, received_bytes: rx, transmitted_bytes: tx, received: rx, transmitted: tx }; }
+export default async function handler(req,res){ cors(res); if(req.method==='OPTIONS') return res.status(200).end(); if(req.headers['x-api-key']!==process.env.NETGUARD_API_KEY) return res.status(401).json({error:'Unauthorized'}); try{ const r=await fetch(`${process.env.NETGUARD_GATEWAY_URL}/status`,{headers:{'x-api-key':process.env.NETGUARD_GATEWAY_TOKEN}}); const data=await r.json(); const list=(data.bandwidth?.interfaces||[]).map(parseBw); return res.status(200).json({interfaces:list, message:null}); }catch(e){ return res.status(502).json({error:'Gateway failed'}); } }
