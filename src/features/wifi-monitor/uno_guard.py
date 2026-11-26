@@ -24,7 +24,7 @@ def check() -> GuardResult:
     except (OSError, UnicodeError, ValueError):
         return GuardResult(False, NO_HARDWARE_MESSAGE)
 
-    is_uno_q = "uno q" in model.lower()
+    is_uno_q = ("uno q" in model.lower()) or ("imola" in model.lower()) or ("arduino" in model.lower())
     is_linux = platform.system() == "Linux"
     within_memory_target = memory_kb > 0
     if not (is_uno_q and is_linux and within_memory_target):
