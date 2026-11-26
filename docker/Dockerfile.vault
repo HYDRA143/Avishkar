@@ -1,1 +1,9 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
+WORKDIR /app
+COPY src/features/reports/ ./reports/
+COPY src/shared/ ./shared/
+COPY vault/ ./vault/
+COPY docker/run_vault.py ./run_vault.py
+ENV PYTHONUNBUFFERED=1
+ENV NETGUARD_ROLE=key-vault
+CMD ["python3", "run_vault.py"]

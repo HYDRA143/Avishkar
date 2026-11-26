@@ -1,9 +1,35 @@
 services:
   wifi-monitor:
+    platform: linux/arm64
     build:
       context: ..
       dockerfile: docker/Dockerfile.uno
+    image: netguard-wifi-monitor:arm64
+    container_name: netguard-wifi-monitor
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    pid: host
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NETGUARD_API_BASE_URL=${EXPO_PUBLIC_API_BASE_URL:-https://avishkarsms.vercel.app}
+      - NETGUARD_API_KEY=${EXPO_PUBLIC_NETGUARD_API_KEY:-NickSam}
+      - WIFI_SCAN_INTERVAL_SECONDS=${WIFI_SCAN_INTERVAL_SECONDS:-30}
+    volumes:
+      - ../vault:/app/vault:ro
+
   key-vault:
+    platform: linux/arm64
     build:
       context: ..
       dockerfile: docker/Dockerfile.vault
+    image: netguard-key-vault:arm64
+    container_name: netguard-key-vault
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NETGUARD_API_BASE_URL=${EXPO_PUBLIC_API_BASE_URL:-https://avishkarsms.vercel.app}
+      - NETGUARD_API_KEY=${EXPO_PUBLIC_NETGUARD_API_KEY:-NickSam}
+      - VAULT_SYNC_INTERVAL_SECONDS=${VAULT_SYNC_INTERVAL_SECONDS:-60}
+    volumes:
+      - ../vault:/app/vault
