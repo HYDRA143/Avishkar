@@ -18,12 +18,11 @@ type JsonObject = Record<string, unknown>;
 
 const config = (): { base: string; key: string } => {
   const runtime = (globalThis as typeof globalThis & {
-    process?: { env?: Record<string, string | undefined> };
     __NETGUARD_CONFIG__?: { apiBaseUrl?: string; apiKey?: string };
   });
   return {
-    base: (runtime.__NETGUARD_CONFIG__?.apiBaseUrl ?? runtime.process?.env?.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, ""),
-    key: runtime.__NETGUARD_CONFIG__?.apiKey ?? runtime.process?.env?.EXPO_PUBLIC_NETGUARD_API_KEY ?? "",
+    base: (runtime.__NETGUARD_CONFIG__?.apiBaseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, ""),
+    key: runtime.__NETGUARD_CONFIG__?.apiKey ?? process.env.EXPO_PUBLIC_NETGUARD_API_KEY ?? "",
   };
 };
 

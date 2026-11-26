@@ -1,7 +1,7 @@
 import { PermissionScreen } from "../components/PermissionScreen";
 import { permissionService } from "../services/permissionService";
 import { useEffect, useState } from "react";
-import { Pressable, ScrollView, Text } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text } from "react-native";
 
 export default function Settings() {
   const [permissions, setPermissions] = useState(PermissionScreen(false));
@@ -41,17 +41,27 @@ export default function Settings() {
   };
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
-      <Text style={{ color: "#fff", fontSize: 24, fontWeight: "700" }}>Settings</Text>
-      {error ? <Text style={{ color: "#f87171" }}>{error}</Text> : null}
-      <Text style={{ color: "#d1d5db" }}>{permissions.message}</Text>
+    <ScrollView contentContainerStyle={styles.container}>
+      <Text style={styles.title}>Settings</Text>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <Text style={styles.text}>{permissions.message}</Text>
       {!permissions.canContinue ? (
-        <Pressable onPress={() => void requestPermissions()} style={{ backgroundColor: "#2563eb", padding: 12, borderRadius: 8 }}>
-          <Text style={{ color: "#fff", textAlign: "center" }}>{permissions.actionLabel}</Text>
+        <Pressable onPress={() => void requestPermissions()} style={styles.button}>
+          <Text style={styles.buttonText}>{permissions.actionLabel}</Text>
         </Pressable>
       ) : (
-        <Text style={{ color: "#4ade80" }}>{permissions.actionLabel}</Text>
+        <Text style={styles.success}>{permissions.actionLabel}</Text>
       )}
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { padding: 20, gap: 12 },
+  title: { color: "#fff", fontSize: 24, fontWeight: "700" },
+  error: { color: "#f87171" },
+  text: { color: "#d1d5db" },
+  button: { backgroundColor: "#2563eb", padding: 12, borderRadius: 8 },
+  buttonText: { color: "#fff", textAlign: "center" },
+  success: { color: "#4ade80" },
+});

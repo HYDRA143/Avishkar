@@ -28,11 +28,10 @@ export const useSelfHealing = (): SelfHealingState => {
   useEffect(() => {
     const controller = new AbortController();
     const runtime = (globalThis as typeof globalThis & {
-      process?: { env?: Record<string, string | undefined> };
       __NETGUARD_CONFIG__?: { apiBaseUrl?: string; apiKey?: string };
     });
-    const base = (runtime.__NETGUARD_CONFIG__?.apiBaseUrl ?? runtime.process?.env?.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, "");
-    const key = runtime.__NETGUARD_CONFIG__?.apiKey ?? runtime.process?.env?.EXPO_PUBLIC_NETGUARD_API_KEY ?? "";
+    const base = (runtime.__NETGUARD_CONFIG__?.apiBaseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, "");
+    const key = runtime.__NETGUARD_CONFIG__?.apiKey ?? process.env.EXPO_PUBLIC_NETGUARD_API_KEY ?? "";
 
     const load = async (): Promise<void> => {
       setState({ loading: true, active: null, message: null, lastActionAt: null, error: null });
