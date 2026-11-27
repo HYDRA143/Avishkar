@@ -6,12 +6,19 @@
     "orientation": "portrait",
     "scheme": "netguard",
     "userInterfaceStyle": "automatic",
-    "platforms": ["android", "ios", "web"],
+    "platforms": [
+      "android",
+      "ios",
+      "web"
+    ],
     "android": {
       "package": "com.netguard.app"
     },
     "ios": {
       "bundleIdentifier": "com.netguard.app"
-    }
+    },
+    "plugins": [
+      "expo-router"
+    ]
   }
 }

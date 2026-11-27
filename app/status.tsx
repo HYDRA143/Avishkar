@@ -1,79 +1,21 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Link, Stack } from "expo-router";
+import {
+  apiConfig,
+  fetchJson,
+  formatBytes,
+  parseBandwidth,
+  parseDevices,
+  type BandwidthInfo,
+} from "./index";
 
-type JsonRecord = Record<string, unknown>;
-type BandwidthInfo = { receivedBytes: number; sentBytes: number } | null;
 type StatusData = {
   loading: boolean;
   error: string | null;
   devices: number | null;
   bandwidth: BandwidthInfo;
-};
-
-const config = (): { base: string; key: string } => {
-  const runtime = globalThis as typeof globalThis & {
-    __NETGUARD_CONFIG__?: { apiBaseUrl?: string; apiKey?: string };
-  };
-  return {
-    base: (runtime.__NETGUARD_CONFIG__?.apiBaseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, ""),
-    key: runtime.__NETGUARD_CONFIG__?.apiKey ?? process.env.EXPO_PUBLIC_NETGUARD_API_KEY ?? "",
-  };
-};
-
-const asRecord = (value: unknown): JsonRecord | null =>
-  typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonRecord : null;
-
-const countDevices = (payload: unknown): number => {
-  const data = asRecord(payload);
-  const source = data?.devices ?? data?.data ?? payload;
-  if (Array.isArray(source)) return source.length;
-  if (typeof source !== "string" || !source.trim()) return 0;
-  const matches = [...source.matchAll(/Device\s*\(([^)]*)\)/g)];
-  if (matches.length > 0) return matches.length;
-  return /ip_address\s*=/.test(source) ? 1 : 0;
-};
-
-const counter = (value: unknown): number | null => {
-  if (value === undefined || value === null) return null;
-  return Number.parseFloat(String(value)) || 0;
-};
-
-const parseBandwidth = (payload: unknown): BandwidthInfo => {
-  const data = asRecord(payload);
-  const bandwidth = asRecord(data?.bandwidth);
-  const interfaces = Array.isArray(data?.interfaces) ? data.interfaces : [];
-  const firstInterface = asRecord(interfaces[0]);
-  const source = bandwidth?.wlan0
-    ?? (firstInterface?.name === undefined || firstInterface.name === "wlan0" ? interfaces[0] : undefined)
-    ?? data?.wlan0;
-  const record = asRecord(source);
-  if (record) {
-    const receivedBytes = counter(record.received_bytes ?? record.rx_bytes);
-    const sentBytes = counter(record.transmitted_bytes ?? record.sent_bytes ?? record.tx_bytes);
-    return receivedBytes === null && sentBytes === null
-      ? null
-      : { receivedBytes: receivedBytes ?? 0, sentBytes: sentBytes ?? 0 };
-  }
-  if (typeof source === "string") {
-    const line = [...source.matchAll(/InterfaceBandwidth\s*\(([^)]*)\)/g)][0]?.[1] ?? source;
-    const received = /(?:received_bytes|rx_bytes)\s*=\s*([0-9]+(?:\.[0-9]+)?)/.exec(line)?.[1];
-    const sent = /(?:transmitted_bytes|sent_bytes|tx_bytes)\s*=\s*([0-9]+(?:\.[0-9]+)?)/.exec(line)?.[1];
-    return received === undefined && sent === undefined
-      ? null
-      : { receivedBytes: counter(received) ?? 0, sentBytes: counter(sent) ?? 0 };
-  }
-  return null;
-};
-
-const fetchJson = async (url: string, key: string, signal: AbortSignal): Promise<unknown> => {
-  const response = await fetch(url, { headers: { "x-api-key": key }, signal });
-  const body: unknown = await response.json();
-  if (!response.ok) {
-    const message = asRecord(body)?.error;
-    throw new Error(typeof message === "string" ? message : `Request failed (${response.status})`);
-  }
-  return body;
+  fetchSucceeded: boolean;
 };
 
 function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: () => void }) {
@@ -82,14 +24,21 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
     error: null,
     devices: null,
     bandwidth: null,
+    fetchSucceeded: false,
   });
 
   useEffect(() => {
     const controller = new AbortController();
     const load = async (): Promise<void> => {
-      const { base, key } = config();
+      const { base, key } = apiConfig();
       if (!base || !key) {
-        setState((current) => ({ ...current, loading: false, error: "Mobile API configuration is missing" }));
+        setState({
+          loading: false,
+          error: "Mobile API configuration is missing",
+          devices: null,
+          bandwidth: null,
+          fetchSucceeded: false,
+        });
         return;
       }
       setState((current) => ({ ...current, error: null }));
@@ -102,16 +51,19 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
         setState({
           loading: false,
           error: null,
-          devices: countDevices(devices),
+          devices: parseDevices(devices).length,
           bandwidth: parseBandwidth(usage),
+          fetchSucceeded: true,
         });
       } catch (caught) {
         if (!controller.signal.aborted) {
-          setState((current) => ({
-            ...current,
+          setState({
             loading: false,
             error: caught instanceof Error ? caught.message : "Unable to load system status",
-          }));
+            devices: null,
+            bandwidth: null,
+            fetchSucceeded: false,
+          });
         }
       }
     };
@@ -123,16 +75,25 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
     };
   }, [refreshKey]);
 
+  const totalBandwidth = state.bandwidth
+    ? state.bandwidth.receivedBytes + state.bandwidth.sentBytes
+    : null;
   const rows = [
     {
       title: "Devices",
-      value: state.loading ? "Checking…" : state.devices && state.devices > 0 ? `Available (${state.devices})` : "Unavailable",
-      good: state.devices !== null && state.devices > 0,
+      value: state.loading ? "Checking…" : state.error ? "Unavailable" : state.devices === null ? "No data" : `${state.devices}`,
+      good: state.fetchSucceeded,
     },
     {
       title: "Bandwidth",
-      value: state.loading ? "Checking…" : state.bandwidth ? "Available" : "Unavailable",
-      good: state.bandwidth !== null,
+      value: state.loading
+        ? "Checking…"
+        : state.error
+          ? "Unavailable"
+          : totalBandwidth === null
+            ? "No data"
+            : formatBytes(totalBandwidth),
+      good: state.fetchSucceeded,
     },
   ];
 

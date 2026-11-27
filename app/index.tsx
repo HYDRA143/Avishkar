@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { Link, Stack } from "expo-router";
 
-type DeviceInfo = {
+export type DeviceInfo = {
   id: string;
   name: string;
   avatarLetter: string;
@@ -17,7 +17,7 @@ type DeviceInfo = {
   macAddress: string;
 };
 
-type BandwidthInfo = {
+export type BandwidthInfo = {
   receivedBytes: number;
   sentBytes: number;
   interfaceName: string;
@@ -47,7 +47,7 @@ type DashboardData = {
 
 type RecordValue = Record<string, unknown>;
 
-const apiConfig = (): { base: string; key: string } => {
+export const apiConfig = (): { base: string; key: string } => {
   const runtime = globalThis as typeof globalThis & {
     __NETGUARD_CONFIG__?: { apiBaseUrl?: string; apiKey?: string };
   };
@@ -72,53 +72,29 @@ const stringField = (record: RecordValue, ...keys: string[]): string => {
 
 const numberField = (record: RecordValue, ...keys: string[]): number | null => {
   for (const key of keys) {
-    if (record[key] === undefined || record[key] === null) continue;
-    return Number.parseFloat(String(record[key])) || 0;
-  }
-  return null;
-};
-
-const stringFromLine = (line: string, field: string): string => {
-  const match = new RegExp(`${field}\\s*=\\s*['"]([^'"]*)['"]`).exec(line);
-  return match?.[1]?.trim() ?? "";
-};
-
-const numberFromLine = (line: string, ...fields: string[]): number | null => {
-  for (const field of fields) {
-    const match = new RegExp(`${field}\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)`).exec(line);
-    if (match) return Number.parseFloat(String(match[1])) || 0;
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
   }
   return null;
 };
 
 const entriesFrom = (payload: unknown, key: string): ReadonlyArray<unknown> => {
   const record = asRecord(payload);
-  const nested = record?.[key] ?? record?.data;
-  const value = nested ?? payload;
-  return Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  const value = record?.[key] ?? record?.data ?? payload;
+  if (Array.isArray(value)) return value;
+  const nested = asRecord(value);
+  const entries = nested?.[key] ?? nested?.data;
+  return Array.isArray(entries) ? entries : [];
 };
 
 const getDeviceName = (ipAddress: string): { name: string; avatarLetter: string } => {
-  if (ipAddress === "192.168.137.1") return { name: "Gateway • Laptop Hotspot", avatarLetter: "G" };
+  if (ipAddress === "192.168.137.1") return { name: "Gateway", avatarLetter: "G" };
   if (ipAddress === "192.168.137.29") return { name: "Phone", avatarLetter: "P" };
-  if (ipAddress === "192.168.137.65") return { name: "Uno Q • NetGuard", avatarLetter: "U" };
-  const octets = ipAddress.split(".");
-  const lastOctet = octets[octets.length - 1] ?? "";
-  return { name: `Device • .${lastOctet}`, avatarLetter: "D" };
+  return { name: ipAddress || "IP not reported", avatarLetter: "?" };
 };
 
-const parseDevices = (payload: unknown): ReadonlyArray<DeviceInfo> =>
+export const parseDevices = (payload: unknown): ReadonlyArray<DeviceInfo> =>
   entriesFrom(payload, "devices").flatMap((value): ReadonlyArray<DeviceInfo> => {
-    if (typeof value === "string") {
-      const matches = [...value.matchAll(/Device\s*\(([^)]*)\)/g)];
-      const lines = matches.length > 0 ? matches.map((match) => match[1]) : [value];
-      return lines.flatMap((line): ReadonlyArray<DeviceInfo> => {
-        const ipAddress = stringFromLine(line, "ip_address");
-        const macAddress = stringFromLine(line, "mac_address");
-        if (!ipAddress && !macAddress) return [];
-        return [{ id: `${ipAddress}-${macAddress}`, ...getDeviceName(ipAddress), ipAddress, macAddress }];
-      });
-    }
     const record = asRecord(value);
     if (!record) return [];
     const ipAddress = stringField(record, "ip_address", "ip", "address");
@@ -129,14 +105,6 @@ const parseDevices = (payload: unknown): ReadonlyArray<DeviceInfo> =>
 
 const bandwidthCounters = (value: unknown): Omit<NonNullable<BandwidthInfo>, "interfaceName"> | null => {
   const record = asRecord(value);
-  if (typeof value === "string") {
-    const line = [...value.matchAll(/InterfaceBandwidth\s*\(([^)]*)\)/g)][0]?.[1] ?? value;
-    const received = numberFromLine(line, "received_bytes", "rx_bytes");
-    const sent = numberFromLine(line, "transmitted_bytes", "sent_bytes", "tx_bytes");
-    return received === null && sent === null
-      ? null
-      : { receivedBytes: received ?? 0, sentBytes: sent ?? 0 };
-  }
   if (!record) return null;
   const receivedBytes = numberField(record, "received_bytes", "rx_bytes");
   const sentBytes = numberField(record, "transmitted_bytes", "sent_bytes", "tx_bytes");
@@ -144,16 +112,29 @@ const bandwidthCounters = (value: unknown): Omit<NonNullable<BandwidthInfo>, "in
   return { receivedBytes: receivedBytes ?? 0, sentBytes: sentBytes ?? 0 };
 };
 
-const parseBandwidth = (payload: unknown): BandwidthInfo => {
+export const parseBandwidth = (payload: unknown): BandwidthInfo => {
   const data = asRecord(payload);
   const bandwidth = asRecord(data?.bandwidth);
-  const interfaceEntries = Array.isArray(data?.interfaces) ? data.interfaces : [];
-  const firstInterface = asRecord(interfaceEntries[0]);
-  const firstInterfaceIsWlan = firstInterface?.name === undefined || firstInterface.name === "wlan0";
-  const wlan = bandwidthCounters(bandwidth?.wlan0)
-    ?? (firstInterfaceIsWlan ? bandwidthCounters(interfaceEntries[0]) : null)
-    ?? bandwidthCounters(data?.wlan0);
-  return wlan ? { interfaceName: "wlan0", ...wlan } : null;
+  const interfaceEntries = Array.isArray(bandwidth?.interfaces)
+    ? bandwidth.interfaces
+    : Array.isArray(data?.interfaces)
+      ? data.interfaces
+      : [];
+  const wlanEntry = interfaceEntries.find((entry) => {
+    const record = asRecord(entry);
+    const name = stringField(record ?? {}, "name", "interface", "iface");
+    return name === "wlan0";
+  });
+  const unnamedEntry = interfaceEntries.find((entry) => {
+    const record = asRecord(entry);
+    return !stringField(record ?? {}, "name", "interface", "iface");
+  });
+  const source = bandwidth?.wlan0 ?? wlanEntry ?? (interfaceEntries.length === 1 ? unnamedEntry : undefined) ?? data?.wlan0;
+  const counters = bandwidthCounters(source);
+  if (!counters) return null;
+  const sourceRecord = asRecord(source);
+  const interfaceName = stringField(sourceRecord ?? {}, "name", "interface", "iface") || "wlan0";
+  return { interfaceName, ...counters };
 };
 
 const speedForInterval = (
@@ -171,7 +152,7 @@ const speedForInterval = (
   };
 };
 
-const fetchJson = async (url: string, key: string, signal: AbortSignal): Promise<unknown> => {
+export const fetchJson = async (url: string, key: string, signal: AbortSignal): Promise<unknown> => {
   const response = await fetch(url, { headers: { "x-api-key": key }, signal });
   const body: unknown = await response.json();
   if (!response.ok) {
@@ -181,16 +162,18 @@ const fetchJson = async (url: string, key: string, signal: AbortSignal): Promise
   return body;
 };
 
-const formatBytes = (bytes: number | null): string => {
+export const formatBytes = (bytes: number | null): string => {
   if (bytes === null) return "—";
+  if (bytes < 1024) return `${bytes.toFixed(0)} B`;
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 };
 
-const formatSpeed = (bytesPerSecond: number): string => {
+export const formatSpeed = (bytesPerSecond: number): string => {
   if (bytesPerSecond >= 1024 ** 2) return `${(bytesPerSecond / 1024 ** 2).toFixed(1)} MB/s`;
-  return `${(bytesPerSecond / 1024).toFixed(0)} KB/s`;
+  if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`;
+  return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
 };
 
 function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: () => void }) {
@@ -276,6 +259,9 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
 
   const receivedBytes = data.bandwidth?.receivedBytes ?? null;
   const sentBytes = data.bandwidth?.sentBytes ?? null;
+  const totalBytes = data.bandwidth
+    ? data.bandwidth.receivedBytes + data.bandwidth.sentBytes
+    : null;
   const actions = [
     { href: "/graph" as const, glyph: "⌁", title: "Usage graph", subtitle: "Explore live traffic" },
     { href: "/reports" as const, glyph: "▤", title: "Reports", subtitle: "Review network snapshots" },
@@ -355,13 +341,13 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
             </View>
             <View style={styles.statDivider} />
             <View style={styles.stat}>
-              <Text style={styles.statValue}>{receivedBytes === null ? "No data" : `${formatBytes(receivedBytes)} Down`}</Text>
-              <Text style={styles.statLabel}>TOTAL RECEIVED</Text>
+              <Text style={styles.statValue}>{totalBytes === null ? "No data" : formatBytes(totalBytes)}</Text>
+              <Text style={styles.statLabel}>TOTAL BANDWIDTH</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.stat}>
-              <Text style={styles.statValue}>{data.bandwidth ? "1" : "No data"}</Text>
-              <Text style={styles.statLabel}>{data.bandwidth ? "INTERFACE" : "INTERFACES"}</Text>
+              <Text style={styles.statValue}>{data.bandwidth?.interfaceName ?? "No data"}</Text>
+              <Text style={styles.statLabel}>INTERFACE</Text>
             </View>
           </View>
         </View>
@@ -410,9 +396,9 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
         <View style={styles.card}>
           <View style={styles.bandwidthTotals}>
             <View style={styles.usageTotalBlock}>
-              <Text style={styles.usageLabel}>TOTAL DOWN</Text>
+              <Text style={styles.usageLabel}>TOTAL BANDWIDTH</Text>
               <Text style={styles.usageValue}>
-                {receivedBytes === null ? "No data" : `${formatBytes(receivedBytes)} Down`}
+                {totalBytes === null ? "No data" : formatBytes(totalBytes)}
               </Text>
             </View>
             <View style={styles.speedBlock}>

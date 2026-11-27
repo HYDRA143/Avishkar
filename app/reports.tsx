@@ -1,83 +1,33 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Link, Stack } from "expo-router";
+import {
+  apiConfig,
+  fetchJson,
+  formatBytes,
+  parseBandwidth,
+  parseDevices,
+  type BandwidthInfo,
+} from "./index";
 
 type ReportItem = {
-  id: string;
-  time: string;
-  devices: unknown;
-  bandwidth: unknown;
-  guard: unknown;
+  id: number;
+  time: number;
+  devices: number;
+  bandwidth: BandwidthInfo;
 };
 
-type JsonRecord = Record<string, unknown>;
-
-const config = (): { base: string; key: string } => {
-  const runtime = globalThis as typeof globalThis & {
-    __NETGUARD_CONFIG__?: { apiBaseUrl?: string; apiKey?: string };
-  };
-  return {
-    base: (runtime.__NETGUARD_CONFIG__?.apiBaseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, ""),
-    key: runtime.__NETGUARD_CONFIG__?.apiKey ?? process.env.EXPO_PUBLIC_NETGUARD_API_KEY ?? "",
-  };
-};
-
-const asRecord = (value: unknown): JsonRecord | null =>
-  typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonRecord : null;
-
-const stringField = (record: JsonRecord, ...keys: string[]): string => {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return "";
-};
-
-const countEntries = (value: unknown): number =>
-  Array.isArray(value)
-    ? value.length
-    : typeof value === "string" && value.trim()
-      ? Math.max(1, [...value.matchAll(/Device\s*\(/g)].length)
-      : 0;
-
-const sumCounters = (value: unknown, fields: ReadonlyArray<string>): number => {
-  const entries = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
-  return entries.reduce<number>((total, entry) => {
-    if (typeof entry === "string") {
-      const matches = [...entry.matchAll(/InterfaceBandwidth\s*\(([^)]*)\)/g)];
-      const lines = matches.length > 0 ? matches.map((match) => match[1]) : [entry];
-      const subtotal = lines.reduce((lineTotal, line) => {
-        for (const field of fields) {
-          const values = [...line.matchAll(new RegExp(`${field}\\s*=\\s*([0-9]+)`, "g"))];
-          if (values.length > 0) {
-            return lineTotal + values.reduce((sum, match) => sum + Number(match[1]), 0);
-          }
-        }
-        return lineTotal;
-      }, 0);
-      return total + subtotal;
-    }
-    const item = asRecord(entry);
-    const raw = item && fields.map((field) => item[field]).find((candidate) => candidate !== undefined);
-    return total + (typeof raw === "number" && Number.isFinite(raw) ? raw : typeof raw === "string" && Number.isFinite(Number(raw)) ? Number(raw) : 0);
-  }, 0);
-};
-
-const formatBytes = (bytes: number): string => {
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-};
+let localReports: ReadonlyArray<ReportItem> = [];
 
 function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: () => void }) {
-  const [reports, setReports] = useState<ReadonlyArray<ReportItem>>([]);
+  const [reports, setReports] = useState<ReadonlyArray<ReportItem>>(localReports);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     const load = async (): Promise<void> => {
-      const { base, key } = config();
+      const { base, key } = apiConfig();
       if (!base || !key) {
         setError("Mobile API configuration is missing");
         setLoading(false);
@@ -86,31 +36,22 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`${base}/api/report`, {
-          headers: { "x-api-key": key },
-          signal: controller.signal,
-        });
-        const payload: unknown = await response.json();
-        if (!response.ok) {
-          throw new Error(stringField(asRecord(payload) ?? {}, "error") || `Reports request failed with status ${response.status}`);
-        }
-        const raw = asRecord(payload)?.reports;
-        const parsed = Array.isArray(raw)
-          ? raw.flatMap((item): ReadonlyArray<ReportItem> => {
-            const value = asRecord(item);
-            if (!value) return [];
-            const time = stringField(value, "time", "timestamp", "createdAt");
-            return [{
-              id: stringField(value, "id") || time,
-              time,
-              devices: value.devices,
-              bandwidth: value.bandwidth,
-              guard: value.gateway ?? value.guard,
-            }];
-          })
-          : [];
+        const [devicePayload, bandwidthPayload] = await Promise.all([
+          fetchJson(`${base}/api/devices`, key, controller.signal),
+          fetchJson(`${base}/api/usage`, key, controller.signal),
+        ]);
         if (!controller.signal.aborted) {
-          setReports(parsed);
+          const time = Date.now();
+          const sample: ReportItem = {
+            id: time,
+            time,
+            devices: parseDevices(devicePayload).length,
+            bandwidth: parseBandwidth(bandwidthPayload),
+          };
+          setReports((current) => {
+            localReports = [sample, ...current].slice(0, 20);
+            return localReports;
+          });
           setLoading(false);
         }
       } catch (caught) {
@@ -121,7 +62,11 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
       }
     };
     void load();
-    return () => controller.abort();
+    const interval = setInterval(() => void load(), 30_000);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
   }, [refreshKey]);
 
   return (
@@ -136,7 +81,7 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
           </View>
           <View style={styles.headerMark}><Text style={styles.headerMarkText}>N</Text></View>
         </View>
-        <Text style={styles.subtitle}>Live snapshots generated from gateway telemetry.</Text>
+        <Text style={styles.subtitle}>Last 20 local samples, captured every 30 seconds in app memory.</Text>
 
         {error ? (
           <View style={styles.errorCard}>
@@ -148,54 +93,45 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
         {loading && reports.length === 0 ? (
           <View style={styles.stateCard}>
             <ActivityIndicator color={palette.cyan} />
-            <Text style={styles.stateTitle}>Collecting live snapshot</Text>
-            <Text style={styles.stateText}>Requesting the latest gateway report.</Text>
+            <Text style={styles.stateTitle}>Collecting local sample</Text>
+            <Text style={styles.stateText}>Reading the latest device and bandwidth counters.</Text>
           </View>
         ) : reports.length === 0 && !error ? (
           <View style={styles.stateCard}>
             <View style={styles.emptyIcon}><Text style={styles.emptyGlyph}>▤</Text></View>
-            <Text style={styles.stateTitle}>No reports yet</Text>
-            <Text style={styles.stateText}>Refresh to generate a report from current gateway data.</Text>
+            <Text style={styles.stateTitle}>No local samples yet</Text>
+            <Text style={styles.stateText}>A sample will appear when the gateway returns real device and bandwidth data.</Text>
             <Pressable onPress={onRefresh} style={({ pressed }) => [styles.inlineButton, pressed && styles.pressed]}>
-              <Text style={styles.inlineButtonText}>Refresh to generate</Text>
+              <Text style={styles.inlineButtonText}>Refresh now</Text>
             </Pressable>
           </View>
         ) : (
           reports.map((report) => {
-            const deviceCount = countEntries(report.devices);
-            const received = sumCounters(report.bandwidth, ["received_bytes", "rx_bytes"]);
-            const sent = sumCounters(report.bandwidth, ["sent_bytes", "transmitted_bytes", "tx_bytes"]);
-            const guardReady = asRecord(report.guard)?.ready === true;
+            const totalBytes = report.bandwidth
+              ? report.bandwidth.receivedBytes + report.bandwidth.sentBytes
+              : null;
             return (
               <View key={report.id} style={styles.reportCard}>
                 <View style={styles.reportTop}>
                   <View>
-                    <Text style={styles.reportKicker}>GATEWAY SNAPSHOT</Text>
+                    <Text style={styles.reportKicker}>LOCAL SNAPSHOT</Text>
                     <Text style={styles.reportTime}>
-                      {report.time ? new Date(report.time).toLocaleString() : "Time unavailable"}
+                      {new Date(report.time).toLocaleString()}
                     </Text>
                   </View>
-                  <View style={[styles.guardBadge, guardReady && styles.guardBadgeReady]}>
-                    <View style={[styles.guardDot, guardReady && styles.guardDotReady]} />
-                    <Text style={[styles.guardText, guardReady && styles.guardTextReady]}>
-                      {guardReady ? "READY" : "NOT READY"}
-                    </Text>
+                  <View style={styles.guardBadge}>
+                    <Text style={styles.guardText}>IN MEMORY</Text>
                   </View>
                 </View>
                 <View style={styles.metrics}>
                   <View style={styles.metric}>
-                    <Text style={styles.metricValue}>{deviceCount}</Text>
+                    <Text style={styles.metricValue}>{report.devices}</Text>
                     <Text style={styles.metricLabel}>DEVICES</Text>
                   </View>
                   <View style={styles.metricDivider} />
                   <View style={styles.metric}>
-                    <Text style={styles.metricValue}>{formatBytes(received)}</Text>
-                    <Text style={styles.metricLabel}>DOWN</Text>
-                  </View>
-                  <View style={styles.metricDivider} />
-                  <View style={styles.metric}>
-                    <Text style={styles.metricValue}>{formatBytes(sent)}</Text>
-                    <Text style={styles.metricLabel}>UP</Text>
+                    <Text style={styles.metricValue}>{formatBytes(totalBytes)}</Text>
+                    <Text style={styles.metricLabel}>TOTAL BANDWIDTH</Text>
                   </View>
                 </View>
               </View>
@@ -249,12 +185,8 @@ const styles = StyleSheet.create({
   reportTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 9, paddingBottom: 15 },
   reportKicker: { color: "#A5B4FC", fontSize: 8, fontWeight: "800", letterSpacing: 1.2 },
   reportTime: { marginTop: 6, color: palette.secondary, fontSize: 10 },
-  guardBadge: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 99, backgroundColor: "rgba(245,158,11,0.08)" },
-  guardBadgeReady: { backgroundColor: "rgba(16,185,129,0.09)" },
-  guardDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#F59E0B" },
-  guardDotReady: { backgroundColor: "#10B981" },
-  guardText: { color: "#FCD34D", fontSize: 8, fontWeight: "800" },
-  guardTextReady: { color: "#6EE7B7" },
+  guardBadge: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 99, backgroundColor: "rgba(99,102,241,0.14)" },
+  guardText: { color: "#C7D2FE", fontSize: 8, fontWeight: "800" },
   metrics: { flexDirection: "row", alignItems: "center", paddingTop: 14, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.08)" },
   metric: { flex: 1, gap: 5 },
   metricValue: { color: palette.white, fontSize: 15, fontWeight: "800" },

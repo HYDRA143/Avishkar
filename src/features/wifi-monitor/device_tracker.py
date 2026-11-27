@@ -32,20 +32,44 @@ class DiscoveryResult:
     devices: tuple[Device, ...]
     message: Optional[str] = None
 
-def _read_arp_table() -> list[tuple[str, str, str]]:
-    entries: list[tuple[str, str, str]] = []
+def _read_neighbor_table() -> list[tuple[str, str, str]]:
+    entries: dict[str, tuple[str, str, str]] = {}
+    ip_command = which("ip")
+    if ip_command:
+        try:
+            result = subprocess.run(
+                (ip_command, "neigh", "show"),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=2,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            result = None
+        if result is not None and result.returncode == 0:
+            for line in result.stdout.splitlines():
+                fields = line.split()
+                try:
+                    ip_address = str(ipaddress.IPv4Address(fields[0]))
+                    interface = fields[fields.index("dev") + 1]
+                    mac_address = fields[fields.index("lladdr") + 1].lower()
+                except (ValueError, IndexError):
+                    continue
+                if re.fullmatch(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}", mac_address):
+                    entries[ip_address] = (ip_address, mac_address, interface)
+
     try:
         lines = ARP_TABLE.read_text(encoding="ascii").splitlines()[1:]
     except (OSError, UnicodeError):
-        return entries
+        return list(entries.values())
     for line in lines:
         fields = line.split()
         if len(fields) < 6 or fields[2] == "0x0":
             continue
         ip_address, mac_address, interface = fields[0], fields[3], fields[5]
         if re.fullmatch(r"[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}", mac_address):
-            entries.append((ip_address, mac_address.lower(), interface))
-    return entries
+            entries.setdefault(ip_address, (ip_address, mac_address.lower(), interface))
+    return list(entries.values())
 
 def _local_ip() -> Optional[str]:
     try:
@@ -164,10 +188,10 @@ def discover_devices(
     else:
         scan_error = "Active scan unavailable: ping command not found"
 
-    arp_entries = _read_arp_table()
-    for ip_address, mac_address, arp_interface in arp_entries:
+    neighbor_entries = _read_neighbor_table()
+    for ip_address, mac_address, neighbor_interface in neighbor_entries:
         if ipaddress.ip_address(ip_address) in selected_network:
-            found.setdefault(ip_address, Device(ip_address, mac_address, arp_interface, True))
+            found.setdefault(ip_address, Device(ip_address, mac_address, neighbor_interface, True))
 
     if gateway_ip and ipaddress.ip_address(gateway_ip) in selected_network:
         found.setdefault(gateway_ip, Device(gateway_ip, "", interface, False))

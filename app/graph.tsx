@@ -1,79 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Link, Stack } from "expo-router";
+import { fetchJson, formatBytes, formatSpeed, parseBandwidth } from "./index";
 
 type Traffic = { down: number; up: number } | null;
 type SpeedPoint = { down: number; up: number; time: number };
 type PreviousBandwidth = { rx: number; tx: number; time: number };
-type Payload = Record<string, unknown>;
-
-const config = (): { base: string; key: string } => {
-  const runtime = globalThis as typeof globalThis & {
-    __NETGUARD_CONFIG__?: { apiBaseUrl?: string; apiKey?: string };
-  };
-  return {
-    base: (runtime.__NETGUARD_CONFIG__?.apiBaseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, ""),
-    key: runtime.__NETGUARD_CONFIG__?.apiKey ?? process.env.EXPO_PUBLIC_NETGUARD_API_KEY ?? "",
-  };
-};
-
-const record = (value: unknown): Payload | null =>
-  typeof value === "object" && value !== null && !Array.isArray(value) ? value as Payload : null;
-
-const getString = (value: unknown, key: string): string => {
-  const field = record(value)?.[key];
-  return typeof field === "string" ? field : "";
-};
-
-const getNumber = (value: unknown, ...keys: string[]): number | null => {
-  const data = record(value);
-  for (const key of keys) {
-    if (!data || data[key] === undefined || data[key] === null) continue;
-    const parsed = Number.parseFloat(String(data[key])) || 0;
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return null;
-};
-
-const parseNumber = (line: string, ...keys: string[]): number | null => {
-  for (const key of keys) {
-    const value = new RegExp(`${key}\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)`).exec(line)?.[1];
-    if (value !== undefined) return Number.parseFloat(String(value)) || 0;
-  }
-  return null;
-};
-
-const parseTraffic = (payload: unknown): ReadonlyArray<Traffic> => {
-  const data = record(payload);
-  const bandwidth = record(data?.bandwidth);
-  const interfaces = Array.isArray(data?.interfaces) ? data.interfaces : [];
-  const firstInterface = record(interfaces[0]);
-  const selected = bandwidth?.wlan0
-    ?? (firstInterface?.name === undefined || firstInterface.name === "wlan0" ? interfaces[0] : undefined)
-    ?? data?.wlan0;
-  if (typeof selected === "string") {
-    const matches = [...selected.matchAll(/InterfaceBandwidth\s*\(([^)]*)\)/g)];
-    const line = matches[0]?.[1] ?? selected;
-    const down = parseNumber(line, "received_bytes", "rx_bytes");
-    const up = parseNumber(line, "transmitted_bytes", "sent_bytes", "tx_bytes");
-    return down === null && up === null ? [] : [{ down: down ?? 0, up: up ?? 0 }];
-  }
-  const down = getNumber(selected, "received_bytes", "rx_bytes");
-  const up = getNumber(selected, "transmitted_bytes", "sent_bytes", "tx_bytes");
-  return down === null && up === null ? [] : [{ down: down ?? 0, up: up ?? 0 }];
-};
-
-const formatBytes = (bytes: number | null): string => {
-  if (bytes === null) return "—";
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-};
-
-const formatSpeed = (bytesPerSecond: number): string =>
-  bytesPerSecond >= 1024 ** 2
-    ? `${(bytesPerSecond / 1024 ** 2).toFixed(1)} MB/s`
-    : `${(bytesPerSecond / 1024).toFixed(0)} KB/s`;
 
 function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: () => void }) {
   const [traffic, setTraffic] = useState<Traffic>(null);
@@ -86,7 +18,7 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
   useEffect(() => {
     const controller = new AbortController();
     const load = async (): Promise<void> => {
-      const { base, key } = config();
+      const { base, key } = apiConfig();
       if (!base || !key) {
         setError("Mobile API configuration is missing");
         setLoading(false);
@@ -94,14 +26,12 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
       }
       setError(null);
       try {
-        const response = await fetch(`${base}/api/usage`, {
-          headers: { "x-api-key": key },
-          signal: controller.signal,
-        });
-        const body: unknown = await response.json();
-        if (!response.ok) throw new Error(getString(body, "error") || `Usage request failed with status ${response.status}`);
+        const body = await fetchJson(`${base}/api/usage`, key, controller.signal);
         if (!controller.signal.aborted) {
-          const counters = parseTraffic(body)[0] ?? null;
+          const parsed = parseBandwidth(body);
+          const counters = parsed
+            ? { down: parsed.receivedBytes, up: parsed.sentBytes }
+            : null;
           const now = Date.now();
           const previous = previousBandwidth.current;
           const seconds = previous ? (now - previous.time) / 1000 : 0;
@@ -139,6 +69,7 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
 
   const down = traffic?.down ?? null;
   const up = traffic?.up ?? null;
+  const total = down === null || up === null ? null : down + up;
   const maximum = Math.max(1, ...speedHistory.map((item) => item.down + item.up));
 
   return (
@@ -166,9 +97,9 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
 
         <View style={styles.hero}>
           <View style={styles.heroGlow} />
-          <Text style={styles.eyebrow}>TRANSFER TOTALS</Text>
-          <Text style={styles.total}>{down === null ? "No data" : `${formatBytes(down)} Down`}</Text>
-          <Text style={styles.totalCaption}>WLAN traffic counters</Text>
+          <Text style={styles.eyebrow}>TOTAL BANDWIDTH</Text>
+          <Text style={styles.total}>{total === null ? "No data" : formatBytes(total)}</Text>
+          <Text style={styles.totalCaption}>Received plus transmitted on wlan0</Text>
           <View style={styles.totalsRow}>
             <View style={styles.totalBlock}>
               <View style={[styles.legendDot, styles.downDot]} />
