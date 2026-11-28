@@ -80,12 +80,12 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
     : null;
   const rows = [
     {
-      title: "Devices",
-      value: state.loading ? "Checking…" : state.error ? "Unavailable" : state.devices === null ? "No data" : `${state.devices}`,
-      good: state.fetchSucceeded,
+      title: "Discovered devices",
+      value: state.loading ? "Checking…" : state.error ? "Unavailable" : state.devices === null ? "No data" : `${state.devices} found`,
+      good: state.fetchSucceeded && state.devices !== null,
     },
     {
-      title: "Bandwidth",
+      title: "Uno wlan0 total",
       value: state.loading
         ? "Checking…"
         : state.error
@@ -93,7 +93,7 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
           : totalBandwidth === null
             ? "No data"
             : formatBytes(totalBandwidth),
-      good: state.fetchSucceeded,
+      good: state.fetchSucceeded && state.bandwidth !== null,
     },
   ];
 
@@ -109,7 +109,7 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
           </View>
           <View style={styles.headerMark}><Text style={styles.headerMarkText}>N</Text></View>
         </View>
-        <Text style={styles.subtitle}>Live health and protection state from your gateway.</Text>
+        <Text style={styles.subtitle}>Live device discovery and Uno wlan0 counters. Per-device usage is unavailable.</Text>
 
         {state.error ? (
           <View style={styles.errorCard}>
@@ -132,7 +132,7 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
                       ? "Devices detected"
                       : "No devices detected"}
               </Text>
-              <Text style={styles.heroCaption}>Device and bandwidth availability from the app backend.</Text>
+              <Text style={styles.heroCaption}>Discovered devices do not include individual usage totals.</Text>
             </View>
             {state.loading ? <ActivityIndicator color={palette.cyan} /> : (
               <View style={[styles.heroDot, state.devices !== null && state.devices > 0 && styles.heroDotOnline]} />
@@ -145,7 +145,7 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionTitle}>Health overview</Text>
-            <Text style={styles.sectionCaption}>Current gateway telemetry</Text>
+            <Text style={styles.sectionCaption}>Counters reported by the Uno interface</Text>
           </View>
           <View style={styles.liveTag}><View style={styles.liveDot} /><Text style={styles.liveText}>LIVE</Text></View>
         </View>

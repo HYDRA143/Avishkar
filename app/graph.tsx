@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Link, Stack } from "expo-router";
-import { fetchJson, formatBytes, formatSpeed, parseBandwidth } from "./index";
+import { apiConfig, fetchJson, formatBytes, formatSpeed, parseBandwidth } from "./index";
 
 type Traffic = { down: number; up: number } | null;
 type SpeedPoint = { down: number; up: number; time: number };
@@ -87,7 +87,7 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
           <View style={styles.headerMark}><Text style={styles.headerMarkText}>N</Text></View>
         </View>
 
-        <Text style={styles.subtitle}>Live bandwidth counters from your gateway.</Text>
+        <Text style={styles.subtitle}>Uno wlan0 interface counters only; discovered phones and laptops are not individually measured.</Text>
         {error ? (
           <View style={styles.errorCard}>
             <Text style={styles.errorTitle}>Usage unavailable</Text>
@@ -97,9 +97,9 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
 
         <View style={styles.hero}>
           <View style={styles.heroGlow} />
-          <Text style={styles.eyebrow}>TOTAL BANDWIDTH</Text>
+          <Text style={styles.eyebrow}>UNO WLAN TOTAL</Text>
           <Text style={styles.total}>{total === null ? "No data" : formatBytes(total)}</Text>
-          <Text style={styles.totalCaption}>Received plus transmitted on wlan0</Text>
+          <Text style={styles.totalCaption}>Received plus transmitted by Uno on wlan0</Text>
           <View style={styles.totalsRow}>
             <View style={styles.totalBlock}>
               <View style={[styles.legendDot, styles.downDot]} />
@@ -134,13 +134,13 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
           {loading && traffic === null ? (
             <View style={styles.emptyState}>
               <ActivityIndicator color={palette.cyan} />
-              <Text style={styles.emptyTitle}>Loading gateway counters</Text>
+              <Text style={styles.emptyTitle}>Loading Uno interface counters</Text>
             </View>
           ) : traffic === null ? (
             <View style={styles.emptyState}>
               <View style={styles.emptyIcon}><Text style={styles.emptyIconText}>⌁</Text></View>
               <Text style={styles.emptyTitle}>No WLAN bandwidth data</Text>
-              <Text style={styles.emptyCaption}>The gateway has not reported wlan0 counters.</Text>
+              <Text style={styles.emptyCaption}>The usage source has not reported Uno wlan0 counters.</Text>
             </View>
           ) : speedHistory.length === 0 ? (
             <View style={styles.emptyState}>

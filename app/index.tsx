@@ -38,7 +38,7 @@ type PreviousBandwidth = {
 type DashboardData = {
   loading: boolean;
   error: string | null;
-  gatewayReady: boolean | null;
+  monitorReady: boolean | null;
   devices: ReadonlyArray<DeviceInfo>;
   bandwidth: BandwidthInfo;
   speed: SpeedPoint | null;
@@ -73,7 +73,7 @@ const stringField = (record: RecordValue, ...keys: string[]): string => {
 const numberField = (record: RecordValue, ...keys: string[]): number | null => {
   for (const key of keys) {
     const value = record[key];
-    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
   }
   return null;
 };
@@ -87,10 +87,9 @@ const entriesFrom = (payload: unknown, key: string): ReadonlyArray<unknown> => {
   return Array.isArray(entries) ? entries : [];
 };
 
-const getDeviceName = (ipAddress: string): { name: string; avatarLetter: string } => {
-  if (ipAddress === "192.168.137.1") return { name: "Gateway", avatarLetter: "G" };
-  if (ipAddress === "192.168.137.29") return { name: "Phone", avatarLetter: "P" };
-  return { name: ipAddress || "IP not reported", avatarLetter: "?" };
+const getDeviceName = (ipAddress: string, reportedName: string): { name: string; avatarLetter: string } => {
+  const name = reportedName || (ipAddress ? `Device ${ipAddress}` : "Discovered device");
+  return { name, avatarLetter: name.charAt(0).toUpperCase() || "?" };
 };
 
 export const parseDevices = (payload: unknown): ReadonlyArray<DeviceInfo> =>
@@ -99,8 +98,14 @@ export const parseDevices = (payload: unknown): ReadonlyArray<DeviceInfo> =>
     if (!record) return [];
     const ipAddress = stringField(record, "ip_address", "ip", "address");
     const macAddress = stringField(record, "mac_address", "mac");
-    if (!ipAddress && !macAddress) return [];
-    return [{ id: `${ipAddress}-${macAddress}`, ...getDeviceName(ipAddress), ipAddress, macAddress }];
+    const reportedName = stringField(record, "name", "hostname", "device_name");
+    if (!ipAddress && !macAddress && !reportedName) return [];
+    return [{
+      id: `${ipAddress}-${macAddress}-${reportedName}`,
+      ...getDeviceName(ipAddress, reportedName),
+      ipAddress,
+      macAddress,
+    }];
   });
 
 const bandwidthCounters = (value: unknown): Omit<NonNullable<BandwidthInfo>, "interfaceName"> | null => {
@@ -108,8 +113,8 @@ const bandwidthCounters = (value: unknown): Omit<NonNullable<BandwidthInfo>, "in
   if (!record) return null;
   const receivedBytes = numberField(record, "received_bytes", "rx_bytes");
   const sentBytes = numberField(record, "transmitted_bytes", "sent_bytes", "tx_bytes");
-  if (receivedBytes === null && sentBytes === null) return null;
-  return { receivedBytes: receivedBytes ?? 0, sentBytes: sentBytes ?? 0 };
+  if (receivedBytes === null || sentBytes === null) return null;
+  return { receivedBytes, sentBytes };
 };
 
 export const parseBandwidth = (payload: unknown): BandwidthInfo => {
@@ -125,11 +130,7 @@ export const parseBandwidth = (payload: unknown): BandwidthInfo => {
     const name = stringField(record ?? {}, "name", "interface", "iface");
     return name === "wlan0";
   });
-  const unnamedEntry = interfaceEntries.find((entry) => {
-    const record = asRecord(entry);
-    return !stringField(record ?? {}, "name", "interface", "iface");
-  });
-  const source = bandwidth?.wlan0 ?? wlanEntry ?? (interfaceEntries.length === 1 ? unnamedEntry : undefined) ?? data?.wlan0;
+  const source = bandwidth?.wlan0 ?? wlanEntry ?? data?.wlan0;
   const counters = bandwidthCounters(source);
   if (!counters) return null;
   const sourceRecord = asRecord(source);
@@ -180,7 +181,7 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
   const [data, setData] = useState<DashboardData>({
     loading: true,
     error: null,
-    gatewayReady: null,
+    monitorReady: null,
     devices: [],
     bandwidth: null,
     speed: null,
@@ -196,7 +197,7 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
         setData({
           loading: false,
           error: "Mobile API configuration is missing",
-          gatewayReady: null,
+          monitorReady: null,
           devices: [],
           bandwidth: null,
           speed: null,
@@ -230,7 +231,7 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
           ...current,
           loading: false,
           error: null,
-          gatewayReady: typeof guard?.ready === "boolean" ? guard.ready : false,
+          monitorReady: typeof guard?.ready === "boolean" ? guard.ready : null,
           devices: parseDevices(devices),
           bandwidth: currentBandwidth,
           speed: sample,
@@ -244,7 +245,7 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
             ...current,
             loading: false,
             error: error instanceof Error ? error.message : "Unable to load network data",
-            gatewayReady: null,
+            monitorReady: null,
           }));
         }
       }
@@ -257,7 +258,6 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
     };
   }, [refreshKey]);
 
-  const receivedBytes = data.bandwidth?.receivedBytes ?? null;
   const sentBytes = data.bandwidth?.sentBytes ?? null;
   const totalBytes = data.bandwidth
     ? data.bandwidth.receivedBytes + data.bandwidth.sentBytes
@@ -265,7 +265,8 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
   const actions = [
     { href: "/graph" as const, glyph: "⌁", title: "Usage graph", subtitle: "Explore live traffic" },
     { href: "/reports" as const, glyph: "▤", title: "Reports", subtitle: "Review network snapshots" },
-    { href: "/status" as const, glyph: "◎", title: "System status", subtitle: "Inspect protection health" },
+    { href: "/status" as const, glyph: "◎", title: "System status", subtitle: "Inspect monitor health" },
+    { href: "/alerts" as const, glyph: "◉", title: "Usage alerts", subtitle: "Set hourly, daily, and weekly caps" },
     { href: "/settings" as const, glyph: "⚙", title: "Settings", subtitle: "Manage local preferences" },
   ];
 
@@ -278,30 +279,30 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
             <View>
               <View style={styles.brandTitleRow}>
                 <Text style={styles.brandTitle}>NetGuard</Text>
-                <Text style={styles.proBadge}>PROTECTED</Text>
+                <Text style={styles.proBadge}>MONITORING</Text>
               </View>
               <Text style={styles.brandCaption}>NETWORK INTELLIGENCE</Text>
             </View>
           </View>
           <View style={[
             styles.statusPill,
-            data.gatewayReady === true && styles.statusOnline,
-            data.gatewayReady === false && !data.loading && styles.statusOffline,
+            data.monitorReady === true && styles.statusOnline,
+            data.monitorReady === false && styles.statusOffline,
           ]}>
             {data.loading
               ? <ActivityIndicator size="small" color={palette.cyan} />
               : <View style={[
                 styles.statusDot,
-                data.gatewayReady === true && styles.statusDotOnline,
-                data.gatewayReady === false && styles.statusDotOffline,
+                data.monitorReady === true && styles.statusDotOnline,
+                data.monitorReady === false && styles.statusDotOffline,
               ]} />}
             <Text style={styles.statusText}>
-              {data.loading ? "SYNCING" : data.gatewayReady === true ? "ONLINE" : "OFFLINE"}
+              {data.loading ? "SYNCING" : data.monitorReady === true ? "READY" : data.monitorReady === false ? "NOT READY" : "UNAVAILABLE"}
             </Text>
           </View>
         </View>
 
-        <Text style={styles.intro}>Your network, protected and in view.</Text>
+        <Text style={styles.intro}>Your network, monitored and in view.</Text>
 
         {data.error ? (
           <View style={styles.errorBanner}>
@@ -315,20 +316,20 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
 
         <View style={styles.hero}>
           <View style={styles.heroGlow} />
-          <Text style={styles.eyebrow}>GATEWAY STATUS</Text>
+          <Text style={styles.eyebrow}>MONITOR STATUS</Text>
           <View style={styles.heroMain}>
             <View>
               <Text style={styles.heroStatus}>
-                {data.loading ? "Connecting" : data.gatewayReady === true ? "Online" : "Offline"}
+                {data.loading ? "Checking" : data.monitorReady === true ? "Ready" : data.monitorReady === false ? "Not ready" : "Unavailable"}
               </Text>
               <Text style={styles.heroDetail}>
-                {data.loading ? "Checking your gateway…" : "Status confirmed by the gateway"}
+                {data.loading ? "Checking monitor status…" : data.monitorReady === null ? "Guard readiness is unavailable" : "Guard readiness from the status API"}
               </Text>
             </View>
             <View style={styles.gatewayOrb}>
               <View style={[
                 styles.gatewayOrbCore,
-                data.gatewayReady === true && styles.gatewayOrbOnline,
+                data.monitorReady === true && styles.gatewayOrbOnline,
               ]}>
                 <Text style={styles.gatewayGlyph}>⌁</Text>
               </View>
@@ -337,12 +338,12 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
           <View style={styles.statRow}>
             <View style={styles.stat}>
               <Text style={styles.statValue}>{data.devices.length}</Text>
-              <Text style={styles.statLabel}>DEVICES</Text>
+              <Text style={styles.statLabel}>DISCOVERED</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.stat}>
               <Text style={styles.statValue}>{totalBytes === null ? "No data" : formatBytes(totalBytes)}</Text>
-              <Text style={styles.statLabel}>TOTAL BANDWIDTH</Text>
+              <Text style={styles.statLabel}>UNO WLAN TOTAL</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.stat}>
@@ -356,7 +357,7 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
           <View>
             <Text style={styles.sectionTitle}>Devices</Text>
             <Text style={styles.sectionCaption}>
-              {data.devices.length} {data.devices.length === 1 ? "device" : "devices"} reporting
+              {data.devices.length} discovered · per-device usage unavailable
             </Text>
           </View>
           <View style={styles.liveTag}><View style={styles.liveDot} /><Text style={styles.liveText}>LIVE</Text></View>
@@ -386,17 +387,23 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
             </View>
           )}
         </View>
+        <View style={styles.scopeNotice}>
+          <Text style={styles.scopeNoticeTitle}>Device usage is not available yet</Text>
+          <Text style={styles.scopeNoticeBody}>
+            This Uno monitors Wi-Fi as a client. The list above is device discovery only; bandwidth totals measure Uno's wlan0 interface, not each phone or laptop.
+          </Text>
+        </View>
 
         <View style={styles.sectionHeading}>
           <View>
             <Text style={styles.sectionTitle}>Bandwidth</Text>
-            <Text style={styles.sectionCaption}>Interface counters reported by your gateway</Text>
+            <Text style={styles.sectionCaption}>Real interface counters from this Uno device</Text>
           </View>
         </View>
         <View style={styles.card}>
           <View style={styles.bandwidthTotals}>
             <View style={styles.usageTotalBlock}>
-              <Text style={styles.usageLabel}>TOTAL BANDWIDTH</Text>
+              <Text style={styles.usageLabel}>UNO WLAN TOTAL</Text>
               <Text style={styles.usageValue}>
                 {totalBytes === null ? "No data" : formatBytes(totalBytes)}
               </Text>
@@ -542,6 +549,12 @@ const styles = StyleSheet.create({
   errorCopy: { flex: 1 },
   errorTitle: { color: "#FCA5A5", fontSize: 12, fontWeight: "700" },
   errorMessage: { marginTop: 3, color: palette.secondary, fontSize: 10, lineHeight: 15 },
+  scopeNotice: {
+    padding: 13, marginTop: 10, borderRadius: 14, backgroundColor: "rgba(245,158,11,0.07)",
+    borderWidth: 1, borderColor: "rgba(245,158,11,0.18)",
+  },
+  scopeNoticeTitle: { color: "#FCD34D", fontSize: 11, fontWeight: "700" },
+  scopeNoticeBody: { marginTop: 5, color: palette.secondary, fontSize: 10, lineHeight: 15 },
   hero: {
     overflow: "hidden", padding: 20, borderRadius: 22, backgroundColor: "#11162B",
     borderWidth: 1, borderColor: "rgba(129,140,248,0.28)", shadowColor: "#312E81",

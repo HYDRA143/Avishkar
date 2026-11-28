@@ -25,8 +25,6 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
   const [settings, setSettings] = useState<SettingsData>({ gatewayOnline: null, guardReady: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [autoHealPreference, setAutoHealPreference] = useState<boolean | null>(null);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [notificationsPermission, setNotificationsPermission] = useState(false);
   const [networkPermission, setNetworkPermission] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
@@ -61,7 +59,6 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
           guardReady: typeof guard?.ready === "boolean" ? guard.ready : null,
         };
         setSettings(nextSettings);
-        setAutoHealPreference((current) => current ?? nextSettings.guardReady);
         setLoading(false);
       } catch (caught) {
         if (!controller.signal.aborted) {
@@ -85,7 +82,6 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
         if (!cancelled) {
           setNotificationsPermission(notifications);
           setNetworkPermission(network);
-          setNotificationsEnabled(notifications);
           setPermissionError(null);
         }
       } catch (caught) {
@@ -105,25 +101,8 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
       ]);
       setNotificationsPermission(notifications);
       setNetworkPermission(network);
-      setNotificationsEnabled(notifications);
     } catch (caught) {
       setPermissionError(caught instanceof Error ? caught.message : "Unable to request permissions");
-    }
-  };
-
-  const toggleNotifications = async (): Promise<void> => {
-    if (notificationsEnabled) {
-      setNotificationsEnabled(false);
-      return;
-    }
-    setPermissionError(null);
-    try {
-      const granted = await permissionService.request("notifications");
-      setNotificationsPermission(granted);
-      setNotificationsEnabled(granted);
-      if (!granted) setPermissionError("Notification permission was not granted.");
-    } catch (caught) {
-      setPermissionError(caught instanceof Error ? caught.message : "Unable to request notification permission");
     }
   };
 
@@ -139,7 +118,7 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
           </View>
           <View style={styles.headerMark}><Text style={styles.headerMarkText}>N</Text></View>
         </View>
-        <Text style={styles.subtitle}>Gateway health, permissions, and local preferences.</Text>
+        <Text style={styles.subtitle}>Monitor health, usage alerts, and device permissions.</Text>
 
         {error ? (
           <View style={styles.errorCard}>
@@ -175,24 +154,32 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
         </View>
 
         <View style={styles.sectionHeader}>
-          <View><Text style={styles.sectionTitle}>Local preferences</Text><Text style={styles.sectionCaption}>These toggles do not change gateway configuration</Text></View>
+          <View><Text style={styles.sectionTitle}>Usage alerts</Text><Text style={styles.sectionCaption}>Configure Uno wlan0 caps and notifications</Text></View>
         </View>
-        <View style={styles.preferencesCard}>
-          <PreferenceRow
-            glyph="◈"
-            title="Auto-heal"
-            subtitle="Local preference; gateway control is not available"
-            enabled={autoHealPreference ?? false}
-            onToggle={() => setAutoHealPreference((enabled) => !enabled)}
-          />
+        <View style={styles.simCard}>
+          <Text style={styles.simCaption}>
+            Hourly, daily, and weekly caps plus unusual-usage reminders. These apply only to this Uno's interface.
+          </Text>
+          <Link href="/alerts" asChild>
+            <Pressable style={({ pressed }) => [styles.manualButton, pressed && styles.pressed]}>
+              <Text style={styles.manualButtonText}>Manage usage alerts</Text>
+              <Text style={styles.manualArrow}>→</Text>
+            </Pressable>
+          </Link>
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <View><Text style={styles.sectionTitle}>Code integrity</Text><Text style={styles.sectionCaption}>Signed GitHub verification is not configured</Text></View>
+        </View>
+        <View style={styles.gatewayCard}>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Automatic source replacement</Text>
+            <Text style={styles.detailValue}>Disabled</Text>
+          </View>
           <View style={styles.separator} />
-          <PreferenceRow
-            glyph="◉"
-            title="Notifications"
-            subtitle={notificationsPermission ? "Device permission granted" : "Enable this device’s notification permission"}
-            enabled={notificationsEnabled}
-            onToggle={() => void toggleNotifications()}
-          />
+          <Text style={styles.integrityNote}>
+            No trusted signed baseline is configured. NetGuard will not pull, modify, or execute replacement code automatically.
+          </Text>
         </View>
 
         {permissionError ? (
@@ -202,7 +189,7 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
         ) : null}
 
         <View style={styles.sectionHeader}>
-          <View><Text style={styles.sectionTitle}>SIM monitor</Text><Text style={styles.sectionCaption}>Warning and manual control only</Text></View>
+          <View><Text style={styles.sectionTitle}>SIM monitor</Text><Text style={styles.sectionCaption}>Future scope; manual controls only in this build</Text></View>
         </View>
         <View style={styles.simCard}>
           <View style={styles.simRow}>
@@ -256,39 +243,6 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
   );
 }
 
-function PreferenceRow({
-  glyph,
-  title,
-  subtitle,
-  enabled,
-  onToggle,
-}: {
-  glyph: string;
-  title: string;
-  subtitle: string;
-  enabled: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <View style={styles.preferenceRow}>
-      <View style={styles.preferenceIcon}><Text style={styles.preferenceGlyph}>{glyph}</Text></View>
-      <View style={styles.preferenceCopy}>
-        <Text style={styles.preferenceTitle}>{title}</Text>
-        <Text style={styles.preferenceCaption}>{subtitle}</Text>
-      </View>
-      <Pressable
-        onPress={onToggle}
-        style={[styles.switchTrack, enabled && styles.switchTrackOn]}
-        accessibilityRole="switch"
-        accessibilityState={{ checked: enabled }}
-        accessibilityLabel={title}
-      >
-        <View style={[styles.switchThumb, enabled && styles.switchThumbOn]} />
-      </Pressable>
-    </View>
-  );
-}
-
 export default function Settings() {
   const [refreshKey, setRefreshKey] = useState(0);
   return <SettingsView refreshKey={refreshKey} onRefresh={() => setRefreshKey((key) => key + 1)} />;
@@ -330,17 +284,7 @@ const styles = StyleSheet.create({
   detailLabel: { color: palette.secondary, fontSize: 10 },
   detailValue: { color: "#FCD34D", fontSize: 10, fontWeight: "700" },
   goodText: { color: "#6EE7B7" },
-  preferencesCard: { paddingHorizontal: 13, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
-  preferenceRow: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 10 },
-  preferenceIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: "rgba(99,102,241,0.16)" },
-  preferenceGlyph: { color: "#A5B4FC", fontSize: 18 },
-  preferenceCopy: { flex: 1 },
-  preferenceTitle: { color: "#F1F5F9", fontSize: 11, fontWeight: "700" },
-  preferenceCaption: { marginTop: 4, color: palette.muted, fontSize: 8, lineHeight: 12 },
-  switchTrack: { width: 40, height: 23, justifyContent: "center", padding: 3, borderRadius: 12, backgroundColor: "rgba(148,163,184,0.25)" },
-  switchTrackOn: { backgroundColor: "rgba(99,102,241,0.8)" },
-  switchThumb: { width: 17, height: 17, borderRadius: 9, backgroundColor: "#E2E8F0" },
-  switchThumbOn: { alignSelf: "flex-end", backgroundColor: palette.white },
+  integrityNote: { color: palette.secondary, fontSize: 9, lineHeight: 14 },
   permissionError: { padding: 11, marginTop: 10, borderRadius: 12, backgroundColor: "rgba(239,68,68,0.08)" },
   permissionErrorText: { color: "#FCA5A5", fontSize: 10 },
   simCard: { padding: 14, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },

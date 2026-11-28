@@ -81,7 +81,7 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
           </View>
           <View style={styles.headerMark}><Text style={styles.headerMarkText}>N</Text></View>
         </View>
-        <Text style={styles.subtitle}>Last 20 local samples, captured every 30 seconds in app memory.</Text>
+        <Text style={styles.subtitle}>Recent real snapshots from Uno wlan0. Other discovered devices are not individually measured.</Text>
 
         {error ? (
           <View style={styles.errorCard}>
@@ -93,8 +93,8 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
         {loading && reports.length === 0 ? (
           <View style={styles.stateCard}>
             <ActivityIndicator color={palette.cyan} />
-            <Text style={styles.stateTitle}>Collecting local sample</Text>
-            <Text style={styles.stateText}>Reading the latest device and bandwidth counters.</Text>
+            <Text style={styles.stateTitle}>Loading network snapshot</Text>
+            <Text style={styles.stateText}>Reading discovered devices and Uno wlan0 counters.</Text>
           </View>
         ) : reports.length === 0 && !error ? (
           <View style={styles.stateCard}>
@@ -114,24 +114,24 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
               <View key={report.id} style={styles.reportCard}>
                 <View style={styles.reportTop}>
                   <View>
-                    <Text style={styles.reportKicker}>LOCAL SNAPSHOT</Text>
+                    <Text style={styles.reportKicker}>UNO WLAN SNAPSHOT</Text>
                     <Text style={styles.reportTime}>
                       {new Date(report.time).toLocaleString()}
                     </Text>
                   </View>
                   <View style={styles.guardBadge}>
-                    <Text style={styles.guardText}>IN MEMORY</Text>
+                    <Text style={styles.guardText}>IN MEMORY · UNSIGNED</Text>
                   </View>
                 </View>
                 <View style={styles.metrics}>
                   <View style={styles.metric}>
                     <Text style={styles.metricValue}>{report.devices}</Text>
-                    <Text style={styles.metricLabel}>DEVICES</Text>
+                    <Text style={styles.metricLabel}>DISCOVERED</Text>
                   </View>
                   <View style={styles.metricDivider} />
                   <View style={styles.metric}>
                     <Text style={styles.metricValue}>{formatBytes(totalBytes)}</Text>
-                    <Text style={styles.metricLabel}>TOTAL BANDWIDTH</Text>
+                    <Text style={styles.metricLabel}>UNO WLAN TOTAL</Text>
                   </View>
                 </View>
               </View>

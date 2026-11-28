@@ -5,6 +5,8 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
+    "types": ["node", "react", "react-dom"],
+    "allowImportingTsExtensions": true,
     "jsx": "preserve",
     "moduleResolution": "bundler",
     "allowJs": true,
@@ -12,6 +14,7 @@
   },
   "include": [
     "api/**/*",
+    "app/**/*",
     "src/**/*"
   ],
   "extends": "expo/tsconfig.base"

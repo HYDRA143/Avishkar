@@ -33,12 +33,19 @@ export default function SimBypass() {
         </View>
         <Text style={styles.subtitle}>You stay in control of mobile data at all times.</Text>
 
+        <View style={styles.futureNotice}>
+          <Text style={styles.futureTitle}>SIM measurement is future scope</Text>
+          <Text style={styles.futureText}>
+            No real SIM usage is collected in this build. Connect the app to a supported Android phone with the required permissions before enabling SIM alerts.
+          </Text>
+        </View>
+
         <View style={styles.hero}>
           <View style={styles.warningIcon}><Text style={styles.warningGlyph}>!</Text></View>
           <Text style={styles.eyebrow}>WARNING ONLY</Text>
           <Text style={styles.heroTitle}>No automatic blocking.</Text>
           <Text style={styles.heroText}>
-            NetGuard can notify you about SIM usage. It will never switch off mobile data automatically.
+            SIM usage is not measured in this build. This screen only provides manual access to Android mobile-data settings.
           </Text>
           <View style={styles.policyRow}>
             <View style={styles.policyDot} />
@@ -97,6 +104,9 @@ const styles = StyleSheet.create({
   headerMark: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(99,102,241,0.2)", borderWidth: 1, borderColor: "rgba(129,140,248,0.3)" },
   headerMarkText: { color: palette.cyan, fontWeight: "800", fontSize: 17 },
   subtitle: { marginTop: 14, marginBottom: 19, color: palette.secondary, fontSize: 11 },
+  futureNotice: { padding: 14, marginBottom: 15, borderRadius: 16, backgroundColor: "rgba(245,158,11,0.07)", borderWidth: 1, borderColor: "rgba(245,158,11,0.18)" },
+  futureTitle: { color: "#FCD34D", fontSize: 11, fontWeight: "700" },
+  futureText: { marginTop: 5, color: palette.secondary, fontSize: 10, lineHeight: 15 },
   hero: { padding: 20, borderRadius: 21, backgroundColor: "#11162B", borderWidth: 1, borderColor: "rgba(245,158,11,0.2)" },
   warningIcon: { width: 42, height: 42, alignItems: "center", justifyContent: "center", marginBottom: 16, borderRadius: 14, backgroundColor: "rgba(245,158,11,0.14)", borderWidth: 1, borderColor: "rgba(245,158,11,0.2)" },
   warningGlyph: { color: "#FCD34D", fontSize: 21, fontWeight: "800" },
