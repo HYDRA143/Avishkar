@@ -65,11 +65,11 @@ export function AppHeader({
   back?: boolean;
   liveStatus?: string;
 }) {
-  const statusColor = liveStatus === "OFFLINE"
+  const statusColor = liveStatus === "OFFLINE" || liveStatus === "Disconnected"
     ? COLORS.red
     : liveStatus === "IDLE" || liveStatus === "PAUSED"
       ? COLORS.orange
-      : COLORS.gold;
+      : liveStatus.startsWith("Connected") ? COLORS.green : COLORS.gold;
   return (
     <View style={styles.headerWrap}>
       <View style={styles.header}>
@@ -87,7 +87,6 @@ export function AppHeader({
           <Text style={[styles.statusText, { color: statusColor }]}>{liveStatus}</Text>
         </View>
       </View>
-      <Text style={styles.source}>Source: Main Network</Text>
       <View style={styles.divider} />
     </View>
   );
@@ -172,26 +171,29 @@ export function ErrorCard({
 }: {
   title: string;
   message: string;
-  onRetry: () => void;
+  onRetry?: () => void;
 }) {
+  const safeMessage = message.replace(/https?:\/\/(?:[a-z0-9-]+\.)*trycloudflare\.com[^\s]*/gi, "[URL hidden]");
   return (
     <View style={styles.errorCard}>
       <View style={styles.errorMessage}>
         <AppIcon name="error" size={22} color={COLORS.red} />
         <View style={styles.errorCopy}>
           <Text style={styles.errorTitle}>{title}</Text>
-          <Text style={styles.errorText}>{message}</Text>
+          <Text style={styles.errorText}>{safeMessage}</Text>
         </View>
       </View>
-      <Pressable onPress={onRetry} style={({ pressed }) => [styles.retryButton, pressed && styles.retryPressed]}>
-        <Text style={styles.retryText}>Try Again</Text>
-      </Pressable>
+      {onRetry ? (
+        <Pressable onPress={onRetry} style={({ pressed }) => [styles.retryButton, pressed && styles.retryPressed]}>
+          <Text style={styles.retryText}>Try Again</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerWrap: { marginBottom: 18 },
+  headerWrap: { paddingTop: 8, marginBottom: 18 },
   header: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: 9 },
   backButton: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: COLORS.card },
   logo: { width: 32, height: 32 },

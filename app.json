@@ -18,6 +18,11 @@
       "ios",
       "web"
     ],
+    "androidStatusBar": {
+      "barStyle": "light-content",
+      "backgroundColor": "#070D1F",
+      "translucent": false
+    },
     "android": {
       "package": "com.netguard.app"
     },

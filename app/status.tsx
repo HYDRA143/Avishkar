@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
 import { Stack } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   apiConfig,
   DeviceRow,
   fetchJson,
   formatBytes,
-  remoteSourceLabel,
   parseBandwidth,
   parseDevices,
   type DeviceInfo,
   type BandwidthInfo,
 } from "./index";
 import { AppHeader, AppIcon, COLORS, ErrorCard, LoadingSkeleton } from "./_components/design";
+import { useAutoRefresh } from "./_components/useAutoRefresh";
 
 type StatusData = {
   loading: boolean;
@@ -22,7 +23,7 @@ type StatusData = {
   fetchSucceeded: boolean;
 };
 
-function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: () => void }) {
+function StatusView({ refreshKey, intervalSeconds }: { refreshKey: number; intervalSeconds: number }) {
   const [state, setState] = useState<StatusData>({
     loading: true,
     error: null,
@@ -73,31 +74,25 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
       }
     };
     void load();
-    const interval = setInterval(() => void load(), 30_000);
     return () => {
       controller.abort();
-      clearInterval(interval);
     };
   }, [refreshKey]);
 
   const totalBandwidth = state.bandwidth
     ? state.bandwidth.receivedBytes + state.bandwidth.sentBytes
     : null;
-  const remoteSource = remoteSourceLabel(apiConfig().base);
-  const isTunnel = remoteSource.startsWith("Cloudflare Tunnel");
-  const tunnelStatus = isTunnel
-    ? state.fetchSucceeded ? "Connected" : state.loading ? "Checking…" : "Unavailable"
-    : "Not configured";
-
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
-      <View style={styles.content}>
+    <SafeAreaView style={styles.screen} edges={["top", "bottom", "left", "right"]}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
         <Stack.Screen options={{ headerShown: false }} />
-        <AppHeader back liveStatus={state.error ? "OFFLINE" : state.loading ? "SYNCING" : state.fetchSucceeded ? "LIVE" : "IDLE"} />
+        <AppHeader liveStatus={state.fetchSucceeded ? "Connected - Main Network" : state.loading ? "SYNCING" : "Disconnected"} />
         <View style={styles.titleRow}><AppIcon name="devices" color={COLORS.gold} size={22} /><Text style={styles.title}>System status</Text></View>
         <Text style={styles.subtitle}>Live device discovery and Uno wlan0 counters. Per-device usage is unavailable.</Text>
 
-        {state.error ? <ErrorCard title="Status check failed" message={state.error} onRetry={onRefresh} /> : null}
+        {state.error ? <ErrorCard title="Status check failed" message={state.error} /> : null}
 
         <View style={styles.hero}>
           <View style={styles.heroGlow} />
@@ -120,7 +115,7 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
             )}
           </View>
           <View style={styles.heroRule} />
-          <Text style={styles.guardLine}>Automatic polling · every 30 seconds</Text>
+          <Text style={styles.guardLine}>Auto refresh: {intervalSeconds}s</Text>
         </View>
 
         <View style={styles.sectionHeader}>
@@ -149,28 +144,24 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
             <Text style={styles.rowValue}>{totalBandwidth === null ? state.loading ? "Checking…" : "No data" : formatBytes(totalBandwidth)}</Text>
           </View>
           <View style={[styles.statusRow, styles.rowDivider]}>
-            <Text style={styles.rowTitle}>Tunnel</Text>
-            <Text style={[styles.rowValue, tunnelStatus === "Connected" && styles.rowValueGood]}>{tunnelStatus}</Text>
+            <Text style={styles.rowTitle}>Network</Text>
+            <View style={styles.connectionValue}>
+              <View style={[styles.rowDot, state.fetchSucceeded ? styles.rowDotGood : styles.rowDotBad]} />
+              <Text style={[styles.rowValue, state.fetchSucceeded ? styles.rowValueGood : styles.rowValueBad]}>
+                {state.fetchSucceeded ? "Connected - Main Network" : "Disconnected"}
+              </Text>
+            </View>
           </View>
-          <Text style={styles.sourceValue}>{remoteSource}</Text>
         </View>
-
-        <Pressable onPress={onRefresh} style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}>
-          <AppIcon name="refresh" size={21} color={COLORS.white} />
-          <View style={styles.refreshCopy}>
-            <Text style={styles.refreshTitle}>Refresh network data</Text>
-            <Text style={styles.refreshCaption}>Fetch the latest device and traffic telemetry</Text>
-          </View>
-          <AppIcon name="arrow-forward" size={18} color={COLORS.white} />
-        </Pressable>
-      </View>
-    </ScrollView>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 export default function Status() {
-  const [refreshKey, setRefreshKey] = useState(0);
-  return <StatusView refreshKey={refreshKey} onRefresh={() => setRefreshKey((key) => key + 1)} />;
+  const { refreshKey, intervalSeconds } = useAutoRefresh();
+  return <StatusView refreshKey={refreshKey} intervalSeconds={intervalSeconds} />;
 }
 
 const palette = { background: COLORS.background, white: COLORS.white, muted: COLORS.secondary, secondary: COLORS.secondary, indigo: COLORS.blue, cyan: COLORS.gold };
@@ -219,6 +210,7 @@ const styles = StyleSheet.create({
   rowValue: { color: palette.secondary, fontSize: 14, fontWeight: "700" },
   rowValueGood: { color: COLORS.green },
   rowValueBad: { color: "#FCA5A5" },
+  connectionValue: { flexDirection: "row", alignItems: "center", gap: 8 },
   healingCard: { flexDirection: "row", alignItems: "center", gap: 11, padding: 16, marginTop: 14, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
   healingIcon: { width: 40, height: 40, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(99,102,241,0.17)" },
   healingGlyph: { color: "#A5B4FC", fontSize: 21 },
@@ -229,11 +221,6 @@ const styles = StyleSheet.create({
   healingBadgeActive: { backgroundColor: "rgba(34,197,94,0.1)" },
   healingBadgeText: { color: COLORS.orange, fontSize: 12, fontWeight: "800" },
   healingBadgeTextActive: { color: COLORS.green },
-  refreshButton: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, marginTop: 19, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue },
   pressed: { opacity: 0.82 },
-  refreshCopy: { flex: 1 },
-  refreshTitle: { color: palette.white, fontSize: 14, fontWeight: "700" },
-  refreshCaption: { marginTop: 3, color: "#DBEAFE", fontSize: 12 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 6 },
-  sourceValue: { marginTop: 8, color: palette.secondary, fontSize: 12, lineHeight: 17 },
 });

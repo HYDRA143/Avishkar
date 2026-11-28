@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Pressable,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Switch,
   Text,
@@ -10,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   DEFAULT_USAGE_ALERT_SETTINGS,
   getUsageMonitorState,
@@ -23,6 +25,7 @@ import {
   type UsageAlertSettings,
 } from "../src/features/wifi-monitor/usageMetrics";
 import { AppHeader, AppIcon, COLORS, ErrorCard } from "./_components/design";
+import { useAutoRefresh } from "./_components/useAutoRefresh";
 
 const BYTES_PER_GB = 1_000_000_000;
 
@@ -56,6 +59,7 @@ const formatDuration = (milliseconds: number): string => {
 };
 
 function UsageAlertsView() {
+  const { intervalSeconds } = useAutoRefresh();
   const [monitor, setMonitor] = useState<UsageMonitorState | null>(null);
   const [form, setForm] = useState<AlertForm>({
     enabled: DEFAULT_USAGE_ALERT_SETTINGS.enabled,
@@ -100,12 +104,12 @@ function UsageAlertsView() {
       void refreshMonitor().catch((caught: unknown) => {
         if (active) setError(caught instanceof Error ? caught.message : "Unable to refresh usage data");
       });
-    }, 30_000);
+    }, intervalSeconds * 1000);
     return () => {
       active = false;
       clearInterval(interval);
     };
-  }, [refreshMonitor]);
+  }, [refreshMonitor, intervalSeconds]);
 
   const save = async (): Promise<void> => {
     setSaving(true);
@@ -147,8 +151,10 @@ function UsageAlertsView() {
     : "Waiting for first sample";
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
-      <View style={styles.content}>
+    <SafeAreaView style={styles.screen} edges={["top", "bottom", "left", "right"]}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
         <Stack.Screen options={{ headerShown: false }} />
         <AppHeader back liveStatus={monitor?.lastError ? "WARNING" : loading ? "SYNCING" : monitor?.settings.enabled ? "LIVE" : "PAUSED"} />
         <View style={styles.titleRow}><AppIcon name="notifications-active" color={COLORS.gold} size={22} /><Text style={styles.title}>Usage alerts</Text></View>
@@ -258,8 +264,9 @@ function UsageAlertsView() {
         )) : (
           <View style={styles.card}><Text style={styles.emptyHistory}>No usage alerts recorded yet.</Text></View>
         )}
-      </View>
-    </ScrollView>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 

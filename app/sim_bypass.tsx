@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
 import { Stack } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { vpnService } from "../src/features/sim-monitor/vpnService";
 import { AppHeader, AppIcon, COLORS, ErrorCard } from "./_components/design";
 
@@ -21,8 +22,10 @@ export default function SimBypass() {
   };
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
-      <View style={styles.content}>
+    <SafeAreaView style={styles.screen} edges={["top", "bottom", "left", "right"]}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
         <Stack.Screen options={{ headerShown: false }} />
         <AppHeader back liveStatus="MANUAL ONLY" />
         <View style={styles.titleRow}><AppIcon name="smartphone" color={COLORS.gold} size={22} /><Text style={styles.title}>Manual controls</Text></View>
@@ -75,8 +78,9 @@ export default function SimBypass() {
             This screen does not disable cellular data or perform network actions. Use your device’s system controls.
           </Text>
         </View>
-      </View>
-    </ScrollView>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 

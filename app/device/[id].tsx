@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from "react-native";
+import { Link, Stack, useLocalSearchParams } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   apiConfig,
   deviceCategoryColor,
@@ -10,12 +11,13 @@ import {
   getDeviceIdentity,
   parseBandwidth,
   parseDevices,
-  remoteSourceLabel,
   type BandwidthInfo,
   type DeviceInfo,
 } from "../index";
 import { getUnoUsageHistory, recordUnoUsage, type UnoUsageEntry } from "../deviceUsageHistory";
 import { AppHeader, AppIcon, COLORS, ErrorCard, LoadingSkeleton } from "../_components/design";
+import { readDeviceNames, saveDeviceName } from "../_components/preferences";
+import { useAutoRefresh } from "../_components/useAutoRefresh";
 
 type DeviceState = {
   loading: boolean;
@@ -35,7 +37,19 @@ function DeviceDetails() {
     bandwidth: null,
     history: getUnoUsageHistory(),
   });
-  const [refreshKey, setRefreshKey] = useState(0);
+  const { refreshKey, intervalSeconds } = useAutoRefresh();
+  const [deviceName, setDeviceName] = useState("");
+  const [nameMessage, setNameMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void readDeviceNames().then((names) => {
+      if (active) setDeviceName(names[deviceIp] ?? "");
+    }).catch((caught: unknown) => {
+      if (active) setNameMessage(caught instanceof Error ? caught.message : "Unable to load saved device name");
+    });
+    return () => { active = false; };
+  }, [deviceIp]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -73,14 +87,13 @@ function DeviceDetails() {
       }
     };
     void load();
-    const interval = setInterval(() => void load(), 30_000);
     return () => {
       controller.abort();
-      clearInterval(interval);
     };
   }, [deviceIp, refreshKey]);
 
   const identity = state.device?.identity ?? getDeviceIdentity(deviceIp, "");
+  const displayedName = deviceName || identity.name;
   const color = deviceCategoryColor(identity.category);
   const totalBytes = state.bandwidth
     ? state.bandwidth.receivedBytes + state.bandwidth.sentBytes
@@ -92,20 +105,23 @@ function DeviceDetails() {
   const maximumSpeed = Math.max(1, ...speedEntries.map((entry) => entry.intervalSpeedBytesPerSecond ?? 0));
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
-      <View style={styles.content}>
+    <SafeAreaView style={styles.screen} edges={["top", "bottom", "left", "right"]}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
         <Stack.Screen options={{ headerShown: false }} />
-        <AppHeader back liveStatus={state.error ? "OFFLINE" : state.loading ? "SYNCING" : state.device ? "LIVE" : "IDLE"} />
+        <AppHeader liveStatus={state.error ? "Disconnected" : state.device ? "Connected - Main Network" : "SYNCING"} />
         <View style={styles.titleRow}>
           <AppIcon
             name={identity.category === "uno" ? "security" : identity.category === "gateway" ? "router" : identity.category === "phone" ? "smartphone" : "device-unknown"}
             color={color.text}
             size={24}
           />
-          <Text style={styles.title}>{state.device?.identity.name ?? "Device"}</Text>
+          <Text style={styles.title}>{displayedName}</Text>
         </View>
+        <Text style={styles.autoRefresh}>Auto refresh: {intervalSeconds}s</Text>
 
-        {state.error ? <ErrorCard title="Device data unavailable" message={state.error} onRetry={() => setRefreshKey((key) => key + 1)} /> : null}
+        {state.error ? <ErrorCard title="Device data unavailable" message={state.error} /> : null}
         {state.loading && !state.device ? (
           <View style={styles.stateCard}><Text style={styles.stateText}>Loading live device data…</Text><LoadingSkeleton lines={3} /></View>
         ) : !state.device ? (
@@ -116,16 +132,14 @@ function DeviceDetails() {
         ) : (
           <>
             <View style={[styles.identityCard, { borderColor: color.border }]}>
-              <InfoRow label="Name" value={identity.name} />
+              <InfoRow label="Name" value={displayedName} />
               <InfoRow label="IP" value={state.device.ipAddress || "Not reported"} />
               <InfoRow label="MAC" value={state.device.macAddress || "Not reported"} />
-              <InfoRow label="Type" value={identity.type} />
-              <InfoRow label="Source" value={identity.source} />
+              <InfoRow label="Vendor hint" value={identity.source} />
               <InfoRow
                 label="Status"
                 value={state.device.reachable === null ? "Unavailable" : state.device.reachable ? "Online" : "Offline"}
               />
-              <InfoRow label="Remote" value={remoteSourceLabel(apiConfig().base)} />
             </View>
 
             <View style={styles.notice}>
@@ -191,15 +205,37 @@ function DeviceDetails() {
                 <Text style={styles.noData}>No real counter readings collected yet.</Text>
               )}
             </View>
+            <View style={styles.renameCard}>
+              <Text style={styles.sectionTitle}>Edit Name</Text>
+              <TextInput
+                value={deviceName}
+                onChangeText={setDeviceName}
+                placeholder={identity.name}
+                placeholderTextColor={COLORS.secondary}
+                style={styles.nameInput}
+                accessibilityLabel="Device display name"
+              />
+              <Pressable onPress={() => {
+                setNameMessage(null);
+                void saveDeviceName(deviceIp, deviceName).then(() => setNameMessage("Name saved on this device."))
+                  .catch((caught: unknown) => setNameMessage(caught instanceof Error ? caught.message : "Unable to save device name"));
+              }} style={({ pressed }) => [styles.reportButton, pressed && styles.pressed]}>
+                <Text style={styles.reportButtonText}>Save Name</Text>
+              </Pressable>
+              {nameMessage ? <Text style={styles.nameMessage}>{nameMessage}</Text> : null}
+            </View>
+            <Link href={{ pathname: "/reports", params: { deviceId: deviceIp } }} asChild>
+              <Pressable style={({ pressed }) => [styles.reportButton, pressed && styles.pressed]}>
+                <Text style={styles.reportButtonText}>View Individual Reports</Text>
+                <AppIcon name="arrow-forward" color={COLORS.white} size={18} />
+              </Pressable>
+            </Link>
           </>
         )}
 
-        <Pressable onPress={() => setRefreshKey((key) => key + 1)} style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}>
-          <AppIcon name="refresh" size={21} color={COLORS.white} />
-          <Text style={styles.refreshTitle}>Refresh live device data</Text>
-        </Pressable>
-      </View>
-    </ScrollView>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -256,12 +292,16 @@ const styles = StyleSheet.create({
   barFill: { backgroundColor: COLORS.blue, borderTopLeftRadius: 6, borderTopRightRadius: 6 },
   barLabel: { color: palette.secondary, fontSize: 12 },
   noData: { padding: 12, color: palette.muted, fontSize: 12 },
+  autoRefresh: { marginBottom: 10, color: palette.muted, fontSize: 12 },
+  renameCard: { padding: 16, marginTop: 16, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
+  nameInput: { minHeight: 44, paddingHorizontal: 10, marginTop: 10, borderRadius: 10, color: COLORS.white, backgroundColor: COLORS.background, borderWidth: 1, borderColor: COLORS.border },
+  nameMessage: { marginTop: 8, color: COLORS.green, fontSize: 12 },
+  reportButton: { minHeight: 50, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, marginTop: 14, borderRadius: 12, backgroundColor: COLORS.blue },
+  reportButtonText: { color: COLORS.white, fontSize: 14, fontWeight: "700" },
   historyCard: { paddingHorizontal: 16, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
   historyRow: { paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.06)" },
   historyTime: { color: palette.muted, fontSize: 12 },
   historyValue: { marginTop: 3, color: "#CBD5E1", fontSize: 13 },
-  refreshButton: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 16, marginTop: 16, borderRadius: 12, backgroundColor: COLORS.blue },
-  refreshTitle: { color: palette.white, fontSize: 14, fontWeight: "700" },
   pressed: { opacity: 0.82 },
   titleRow: { width: "100%", flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 14 },
   metricHeading: { flexDirection: "row", alignItems: "center", gap: 7 },

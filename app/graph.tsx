@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
 import { Stack } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   apiConfig,
   DeviceRow,
@@ -12,12 +13,13 @@ import {
 } from "./index";
 import { getUnoUsageHistory, recordUnoUsage, type UnoUsageEntry } from "./deviceUsageHistory";
 import { AppHeader, AppIcon, COLORS, ErrorCard, LoadingSkeleton, NetworkLineGraph } from "./_components/design";
+import { useAutoRefresh } from "./_components/useAutoRefresh";
 
 type Traffic = { down: number; up: number } | null;
 type SpeedPoint = { down: number; up: number; time: number };
 type PreviousBandwidth = { rx: number; tx: number; time: number };
 
-function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: () => void }) {
+function GraphScreen({ refreshKey }: { refreshKey: number }) {
   const [traffic, setTraffic] = useState<Traffic>(null);
   const [speedHistory, setSpeedHistory] = useState<ReadonlyArray<SpeedPoint>>([]);
   const [currentSpeed, setCurrentSpeed] = useState<SpeedPoint | null>(null);
@@ -81,10 +83,8 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
       }
     };
     void load();
-    const interval = setInterval(() => void load(), 30_000);
     return () => {
       controller.abort();
-      clearInterval(interval);
     };
   }, [refreshKey]);
 
@@ -92,13 +92,15 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
   const up = traffic?.up ?? null;
   const total = down === null || up === null ? null : down + up;
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
-      <View style={styles.content}>
+    <SafeAreaView style={styles.screen} edges={["top", "bottom", "left", "right"]}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
         <Stack.Screen options={{ headerShown: false }} />
-        <AppHeader back liveStatus={error ? "OFFLINE" : loading ? "SYNCING" : traffic ? "LIVE" : "IDLE"} />
+        <AppHeader liveStatus={error ? "Disconnected" : traffic ? "Connected - Main Network" : "SYNCING"} />
         <Text style={styles.title}>Usage graph</Text>
         <Text style={styles.subtitle}>Uno wlan0 interface counters only; speed shown in KB/s. Discovered phones and laptops are not individually measured.</Text>
-        {error ? <ErrorCard title="Usage unavailable" message={error} onRetry={onRefresh} /> : null}
+        {error ? <ErrorCard title="Usage unavailable" message={error} /> : null}
 
         <View style={styles.metricsRow}>
           <View style={styles.metricCard}>
@@ -189,22 +191,15 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
           )) : <Text style={styles.historyEmpty}>No real samples recorded yet.</Text>}
         </View>
 
-        <Pressable onPress={onRefresh} style={({ pressed }) => [styles.refreshButton, pressed && styles.refreshPressed]}>
-          <AppIcon name="refresh" size={21} color={COLORS.white} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.refreshTitle}>Refresh network data</Text>
-            <Text style={styles.refreshCaption}>Fetch the latest device and traffic telemetry</Text>
-          </View>
-          <AppIcon name="arrow-forward" size={18} color={COLORS.white} />
-        </Pressable>
-      </View>
-    </ScrollView>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 export default function Graph() {
-  const [refreshKey, setRefreshKey] = useState(0);
-  return <GraphScreen refreshKey={refreshKey} onRefresh={() => setRefreshKey((key) => key + 1)} />;
+  const { refreshKey } = useAutoRefresh();
+  return <GraphScreen refreshKey={refreshKey} />;
 }
 
 const palette = { background: COLORS.background, white: COLORS.white, muted: COLORS.secondary, secondary: COLORS.secondary, indigo: COLORS.blue, cyan: COLORS.gold, blue: COLORS.blue, gold: COLORS.gold };
@@ -270,10 +265,6 @@ const styles = StyleSheet.create({
   emptyIconText: { color: "#A5B4FC", fontSize: 23 },
   emptyTitle: { color: "#E2E8F0", fontSize: 12, fontWeight: "700" },
   emptyCaption: { maxWidth: 260, color: palette.muted, fontSize: 12, textAlign: "center", lineHeight: 18 },
-  refreshButton: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, marginTop: 19, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue },
-  refreshPressed: { opacity: 0.82 },
-  refreshTitle: { color: palette.white, fontSize: 14, fontWeight: "700" },
-  refreshCaption: { marginTop: 3, color: "#DBEAFE", fontSize: 12 },
   metricsRow: { flexDirection: "row", gap: 12, marginBottom: 18 },
   metricCard: { flex: 1, minWidth: 0, gap: 8, padding: 16, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
   metricHeading: { flexDirection: "row", alignItems: "center", gap: 7 },

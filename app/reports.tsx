@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Stack } from "expo-router";
+import { ActivityIndicator, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
+import { Stack, useLocalSearchParams } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   apiConfig,
   deviceCategoryColor,
@@ -13,7 +14,8 @@ import {
   type DeviceInfo,
 } from "./index";
 import { getUnoUsageHistory, recordUnoUsage, type UnoUsageEntry } from "./deviceUsageHistory";
-import { AppHeader, AppIcon, COLORS, ErrorCard, LoadingSkeleton } from "./_components/design";
+import { AppHeader, AppIcon, COLORS, ErrorCard, LoadingSkeleton, NetworkLineGraph } from "./_components/design";
+import { useAutoRefresh } from "./_components/useAutoRefresh";
 
 type ReportItem = {
   id: number;
@@ -25,11 +27,12 @@ type ReportItem = {
 let localReports: ReadonlyArray<ReportItem> = [];
 let localUsageHistory: ReadonlyArray<UnoUsageEntry> = [];
 
-function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: () => void }) {
+function ReportsView({ refreshKey, intervalSeconds, deviceId }: { refreshKey: number; intervalSeconds: number; deviceId?: string }) {
   const [reports, setReports] = useState<ReadonlyArray<ReportItem>>(localReports);
   const [usageHistory, setUsageHistory] = useState<ReadonlyArray<UnoUsageEntry>>(localUsageHistory);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -64,6 +67,7 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
             localReports = [sample, ...current].slice(0, 20);
             return localReports;
           });
+          setLastUpdated(time);
           setLoading(false);
         }
       } catch (caught) {
@@ -74,27 +78,29 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
       }
     };
     void load();
-    const interval = setInterval(() => void load(), 30_000);
     return () => {
       controller.abort();
-      clearInterval(interval);
     };
   }, [refreshKey]);
   const latestReport = reports[0];
   const discoveredDevices = latestReport?.devices ?? [];
+  const visibleDevices = deviceId ? discoveredDevices.filter((device) => device.id === deviceId || device.ipAddress === deviceId) : discoveredDevices;
   const latestTotal = latestReport?.bandwidth
     ? latestReport.bandwidth.receivedBytes + latestReport.bandwidth.sentBytes
     : null;
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
-      <View style={styles.content}>
+    <SafeAreaView style={styles.screen} edges={["top", "bottom", "left", "right"]}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
         <Stack.Screen options={{ headerShown: false }} />
-        <AppHeader back liveStatus={error ? "OFFLINE" : loading ? "SYNCING" : reports.length ? "LIVE" : "IDLE"} />
+        <AppHeader liveStatus={error ? "Disconnected" : reports.length ? "Connected - Main Network" : "SYNCING"} />
         <View style={styles.titleRow}><AppIcon name="assessment" color={COLORS.gold} size={22} /><Text style={styles.title}>Reports</Text></View>
         <Text style={styles.subtitle}>Recent real snapshots from Uno wlan0. Other discovered devices are not individually measured.</Text>
+        <Text style={styles.subtitle}>Auto refresh: {intervalSeconds}s · Last updated: {lastUpdated === null ? "Waiting for data" : new Date(lastUpdated).toLocaleTimeString()}</Text>
 
-        {error ? <ErrorCard title="Reports unavailable" message={error} onRetry={onRefresh} /> : null}
+        {error ? <ErrorCard title="Reports unavailable" message={error} /> : null}
 
         {loading && reports.length === 0 ? (
           <View style={styles.stateCard}>
@@ -108,17 +114,25 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
             <View style={styles.emptyIcon}><AppIcon name="assessment" size={23} color={COLORS.gold} /></View>
             <Text style={styles.stateTitle}>No local samples yet</Text>
             <Text style={styles.stateText}>A sample will appear when the gateway returns real device and bandwidth data.</Text>
-            <Pressable onPress={onRefresh} style={({ pressed }) => [styles.inlineButton, pressed && styles.pressed]}>
-              <Text style={styles.inlineButtonText}>Refresh now</Text>
-            </Pressable>
           </View>
         ) : (
           <>
+            {!deviceId ? (
+              <View style={styles.combinedTotal}>
+                <Text style={styles.reportKicker}>COMBINED PREVIEW · UNO INTERFACE</Text>
+                <Text style={styles.combinedTotalText}>Total: {formatBytes(latestTotal)}</Text>
+                {usageHistory.filter((entry) => entry.intervalSpeedBytesPerSecond !== null).length > 0 ? (
+                  <NetworkLineGraph
+                    values={usageHistory.filter((entry) => entry.intervalSpeedBytesPerSecond !== null).slice(-7).map((entry) => entry.intervalSpeedBytesPerSecond ?? 0)}
+                    labels={usageHistory.filter((entry) => entry.intervalSpeedBytesPerSecond !== null).slice(-7).map((entry) => new Date(entry.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}
+                  />
+                ) : <Text style={styles.noDeviceUsage}>No real speed samples available yet.</Text>}
+              </View>
+            ) : null}
             <View style={styles.reportTop}>
-              <Text style={styles.reportKicker}>LIVE DEVICE REPORTS</Text>
-              <Text style={styles.guardText}>IN MEMORY · UNSIGNED</Text>
+              <Text style={styles.reportKicker}>{deviceId ? "INDIVIDUAL DEVICE REPORT" : "PER-DEVICE REPORTS"}</Text>
             </View>
-            {discoveredDevices.length > 0 ? discoveredDevices.map((device) => {
+            {visibleDevices.length > 0 ? visibleDevices.map((device) => {
               const isUno = device.identity.category === "uno";
               const deviceHistory = isUno
                 ? usageHistory.filter((entry) => entry.intervalBytes !== null).slice(-20).reverse()
@@ -155,35 +169,22 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
               );
             }) : (
               <View style={styles.stateCard}>
-                <Text style={styles.stateTitle}>No real devices reported</Text>
-                <Text style={styles.stateText}>Per-device sections appear only for devices returned by the live discovery API.</Text>
+                <Text style={styles.stateTitle}>{deviceId ? "This device has no individual usage telemetry" : "No real devices reported"}</Text>
+                <Text style={styles.stateText}>{deviceId ? "Only live discovery is available; network interface traffic is not attributed to this device." : "Per-device sections appear only for devices returned by the live discovery API."}</Text>
               </View>
             )}
           </>
         )}
-
-        <View style={styles.combinedTotal}>
-          <Text style={styles.combinedTotalText}>
-            Combined Total (Uno-only) = {formatBytes(latestTotal)}
-          </Text>
         </View>
-
-        <Pressable onPress={onRefresh} style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}>
-          <AppIcon name="refresh" size={21} color={COLORS.white} />
-          <View style={styles.refreshCopy}>
-            <Text style={styles.refreshTitle}>Refresh network data</Text>
-            <Text style={styles.refreshCaption}>Fetch the latest device and traffic telemetry</Text>
-          </View>
-          <AppIcon name="arrow-forward" size={18} color={COLORS.white} />
-        </Pressable>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 export default function Reports() {
-  const [refreshKey, setRefreshKey] = useState(0);
-  return <ReportsView refreshKey={refreshKey} onRefresh={() => setRefreshKey((key) => key + 1)} />;
+  const { refreshKey, intervalSeconds } = useAutoRefresh();
+  const { deviceId } = useLocalSearchParams<{ deviceId?: string }>();
+  return <ReportsView refreshKey={refreshKey} intervalSeconds={intervalSeconds} deviceId={deviceId} />;
 }
 
 const palette = { background: COLORS.background, white: COLORS.white, muted: COLORS.secondary, secondary: COLORS.secondary, indigo: COLORS.blue, cyan: COLORS.gold };
@@ -229,10 +230,6 @@ const styles = StyleSheet.create({
   metricValue: { color: palette.white, fontSize: 16, fontWeight: "800" },
   metricLabel: { color: palette.muted, fontSize: 12, fontWeight: "700", letterSpacing: 0.8 },
   metricDivider: { width: 1, height: 25, marginHorizontal: 8, backgroundColor: "rgba(255,255,255,0.1)" },
-  refreshButton: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, marginTop: 18, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue },
   pressed: { opacity: 0.82 },
-  refreshCopy: { flex: 1 },
-  refreshTitle: { color: palette.white, fontSize: 14, fontWeight: "700" },
-  refreshCaption: { marginTop: 3, color: "#DBEAFE", fontSize: 12 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 6 },
 });

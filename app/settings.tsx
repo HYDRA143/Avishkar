@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from "react-native";
 import { Link, Stack } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { permissionService } from "../src/mobile/services/permissionService";
 import { AppHeader, AppIcon, COLORS, ErrorCard } from "./_components/design";
+import { parseDevices, fetchJson, type DeviceInfo } from "./index";
+import { readDeviceNames, saveDeviceName, REFRESH_INTERVALS } from "./_components/preferences";
+import { useAutoRefresh } from "./_components/useAutoRefresh";
 
 type SettingsData = {
   gatewayOnline: boolean | null;
@@ -22,10 +26,22 @@ const config = (): { base: string; key: string } => {
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
-function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: () => void }) {
+function SettingsView({
+  refreshKey,
+  intervalSeconds,
+  setRefreshInterval,
+}: {
+  refreshKey: number;
+  intervalSeconds: number;
+  setRefreshInterval: (seconds: 5 | 10 | 30 | 60) => Promise<void>;
+}) {
   const [settings, setSettings] = useState<SettingsData>({ gatewayOnline: null, guardReady: null });
+  const [devices, setDevices] = useState<ReadonlyArray<DeviceInfo>>([]);
+  const [deviceNames, setDeviceNames] = useState<Record<string, string>>({});
+  const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [notificationsPermission, setNotificationsPermission] = useState(false);
   const [networkPermission, setNetworkPermission] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
@@ -42,10 +58,10 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`${base}/api/status`, {
-          headers: { "x-api-key": key },
-          signal: controller.signal,
-        });
+        const [response, devicePayload] = await Promise.all([
+          fetch(`${base}/api/status`, { headers: { "x-api-key": key }, signal: controller.signal }),
+          fetchJson(`${base}/api/devices`, key, controller.signal),
+        ]);
         const body: unknown = await response.json();
         if (!response.ok) {
           const message = asRecord(body)?.error;
@@ -60,6 +76,7 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
           guardReady: typeof guard?.ready === "boolean" ? guard.ready : null,
         };
         setSettings(nextSettings);
+        setDevices(parseDevices(devicePayload));
         setLoading(false);
       } catch (caught) {
         if (!controller.signal.aborted) {
@@ -71,6 +88,30 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
     void load();
     return () => controller.abort();
   }, [refreshKey]);
+
+  useEffect(() => {
+    let active = true;
+    void readDeviceNames().then((names) => {
+      if (active) {
+        setDeviceNames(names);
+        setNameDrafts(names);
+      }
+    }).catch((caught: unknown) => {
+      if (active) setPreferenceError(caught instanceof Error ? caught.message : "Unable to load saved device names");
+    });
+    return () => { active = false; };
+  }, []);
+
+  const persistDeviceName = async (device: DeviceInfo, reset = false): Promise<void> => {
+    setPreferenceError(null);
+    try {
+      const updated = await saveDeviceName(device.ipAddress, reset ? null : nameDrafts[device.ipAddress] ?? "");
+      setDeviceNames(updated);
+      setNameDrafts(updated);
+    } catch (caught) {
+      setPreferenceError(caught instanceof Error ? caught.message : "Unable to save device name");
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -108,40 +149,81 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
   };
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
-      <View style={styles.content}>
+    <SafeAreaView style={styles.screen} edges={["top", "bottom", "left", "right"]}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
         <Stack.Screen options={{ headerShown: false }} />
-        <AppHeader back liveStatus={error ? "OFFLINE" : loading ? "SYNCING" : settings.gatewayOnline ? "LIVE" : "IDLE"} />
+        <AppHeader liveStatus={settings.gatewayOnline ? "Connected - Main Network" : loading ? "SYNCING" : "Disconnected"} />
         <View style={styles.titleRow}><AppIcon name="settings" color={COLORS.gold} size={22} /><Text style={styles.title}>Settings</Text></View>
-        <Text style={styles.subtitle}>Monitor health, usage alerts, and device permissions.</Text>
+        <Text style={styles.subtitle}>Auto refresh, device names, and app information.</Text>
 
-        {error ? <ErrorCard title="Settings unavailable" message={error} onRetry={onRefresh} /> : null}
+        {error ? <ErrorCard title="Settings unavailable" message={error} /> : null}
 
         <View style={styles.sectionHeader}>
-          <View><Text style={styles.sectionTitle}>Gateway</Text><Text style={styles.sectionCaption}>Live configuration status</Text></View>
+          <View><Text style={styles.sectionTitle}>Auto Refresh</Text><Text style={styles.sectionCaption}>Choose how often live screens update</Text></View>
           {loading ? <ActivityIndicator color={palette.cyan} /> : null}
         </View>
         <View style={styles.gatewayCard}>
-          <View style={styles.gatewayRow}>
-            <View style={styles.gatewayIcon}><AppIcon name="router" color={COLORS.blue} size={22} /></View>
-            <View style={styles.gatewayCopy}>
-              <Text style={styles.gatewayTitle}>Gateway connection</Text>
-              <Text style={styles.gatewayCaption}>Confirmed by /api/status</Text>
+          {REFRESH_INTERVALS.map((seconds, index) => (
+            <Pressable key={seconds} onPress={() => {
+              setPreferenceError(null);
+              void setRefreshInterval(seconds).catch((caught: unknown) =>
+                setPreferenceError(caught instanceof Error ? caught.message : "Unable to save auto-refresh interval"));
+            }} style={[styles.radioRow, index > 0 && styles.separator]}>
+              <Text style={styles.detailLabel}>{seconds} sec</Text>
+              <View style={[styles.radioOuter, intervalSeconds === seconds && styles.radioOuterSelected]}>
+                {intervalSeconds === seconds ? <View style={styles.radioInner} /> : null}
+              </View>
+            </Pressable>
+          ))}
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <View><Text style={styles.sectionTitle}>Device Names</Text><Text style={styles.sectionCaption}>Names are saved on this device</Text></View>
+        </View>
+        <View style={styles.gatewayCard}>
+          {devices.length > 0 ? devices.map((device, index) => (
+            <View key={device.id} style={[styles.nameRow, index > 0 && styles.separator]}>
+              <View style={styles.nameInputCopy}>
+                <Text style={styles.gatewayTitle}>{deviceNames[device.ipAddress] || device.identity.name}</Text>
+                <Text style={styles.gatewayCaption}>{device.ipAddress}</Text>
+                <TextInput
+                  value={nameDrafts[device.ipAddress] ?? deviceNames[device.ipAddress] ?? ""}
+                  onChangeText={(value) => setNameDrafts((current) => ({ ...current, [device.ipAddress]: value }))}
+                  placeholder={device.identity.name}
+                  placeholderTextColor={COLORS.secondary}
+                  style={styles.nameInput}
+                  accessibilityLabel={`Edit name for ${device.ipAddress}`}
+                />
+              </View>
+              <View style={styles.nameActions}>
+                <Pressable onPress={() => void persistDeviceName(device)}><Text style={styles.viewAll}>Save</Text></Pressable>
+                <Pressable onPress={() => void persistDeviceName(device, true)}><Text style={styles.resetText}>Reset</Text></Pressable>
+              </View>
             </View>
-            <View style={[styles.stateBadge, settings.gatewayOnline && styles.stateBadgeGood]}>
-              <Text style={[styles.stateBadgeText, settings.gatewayOnline && styles.stateBadgeTextGood]}>
-                {settings.gatewayOnline === null ? "UNKNOWN" : settings.gatewayOnline ? "ONLINE" : "OFFLINE"}
+          )) : <Text style={styles.gatewayCaption}>{loading ? "Loading discovered devices…" : "No live devices available to rename."}</Text>}
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <View><Text style={styles.sectionTitle}>About</Text><Text style={styles.sectionCaption}>NetGuard application</Text></View>
+        </View>
+        <View style={styles.gatewayCard}>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>App version</Text>
+            <Text style={styles.detailValue}>1.0.0</Text>
+          </View>
+          <View style={[styles.detailRow, styles.separator, styles.aboutStatus]}>
+            <Text style={styles.detailLabel}>Network</Text>
+            <View style={styles.connectionValue}>
+              <View style={[styles.connectionDot, settings.gatewayOnline ? styles.connectionDotOnline : styles.connectionDotOffline]} />
+              <Text style={[styles.detailValue, settings.gatewayOnline ? styles.goodText : styles.disconnectedText]}>
+                {settings.gatewayOnline ? "Connected - Main Network" : "Disconnected"}
               </Text>
             </View>
           </View>
-          <View style={styles.separator} />
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Guard readiness</Text>
-            <Text style={[styles.detailValue, settings.guardReady && styles.goodText]}>
-              {settings.guardReady === null ? "Unknown" : settings.guardReady ? "Ready" : "Not ready"}
-            </Text>
-          </View>
         </View>
+        {preferenceError ? <Text style={styles.preferenceError}>{preferenceError}</Text> : null}
 
         <View style={styles.sectionHeader}>
           <View><Text style={styles.sectionTitle}>Usage alerts</Text><Text style={styles.sectionCaption}>Configure Uno wlan0 caps and notifications</Text></View>
@@ -220,22 +302,15 @@ function SettingsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh
           </Pressable>
         </View>
 
-        <Pressable onPress={onRefresh} style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}>
-          <AppIcon name="refresh" size={21} color={COLORS.white} />
-          <View style={styles.refreshCopy}>
-            <Text style={styles.refreshTitle}>Refresh network data</Text>
-            <Text style={styles.refreshCaption}>Fetch the latest device and traffic telemetry</Text>
-          </View>
-          <AppIcon name="arrow-forward" size={18} color={COLORS.white} />
-        </Pressable>
-      </View>
-    </ScrollView>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 export default function Settings() {
-  const [refreshKey, setRefreshKey] = useState(0);
-  return <SettingsView refreshKey={refreshKey} onRefresh={() => setRefreshKey((key) => key + 1)} />;
+  const { refreshKey, intervalSeconds, setRefreshInterval } = useAutoRefresh();
+  return <SettingsView refreshKey={refreshKey} intervalSeconds={intervalSeconds} setRefreshInterval={setRefreshInterval} />;
 }
 
 const palette = { background: COLORS.background, white: COLORS.white, muted: COLORS.secondary, secondary: COLORS.secondary, indigo: COLORS.blue, cyan: COLORS.gold };
@@ -275,6 +350,23 @@ const styles = StyleSheet.create({
   detailLabel: { color: palette.secondary, fontSize: 13 },
   detailValue: { color: COLORS.orange, fontSize: 13, fontWeight: "700" },
   goodText: { color: COLORS.green },
+  disconnectedText: { color: COLORS.red },
+  radioRow: { minHeight: 47, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  radioOuter: { width: 20, height: 20, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: COLORS.secondary, borderRadius: 10 },
+  radioOuterSelected: { borderColor: COLORS.blue },
+  radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.blue },
+  viewAll: { color: "#60A5FA", fontSize: 13, fontWeight: "700" },
+  nameRow: { minHeight: 82, flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
+  nameInputCopy: { flex: 1 },
+  nameInput: { height: 37, marginTop: 6, paddingHorizontal: 9, borderRadius: 8, color: COLORS.white, backgroundColor: COLORS.background, borderWidth: 1, borderColor: COLORS.border },
+  nameActions: { gap: 14 },
+  resetText: { color: COLORS.orange, fontSize: 13, fontWeight: "700" },
+  aboutStatus: { marginTop: 12, paddingTop: 12 },
+  connectionValue: { flexDirection: "row", alignItems: "center", gap: 7 },
+  connectionDot: { width: 7, height: 7, borderRadius: 4 },
+  connectionDotOnline: { backgroundColor: COLORS.green },
+  connectionDotOffline: { backgroundColor: COLORS.red },
+  preferenceError: { marginTop: 9, color: COLORS.red, fontSize: 12 },
   integrityNote: { color: palette.secondary, fontSize: 12, lineHeight: 18 },
   permissionError: { padding: 11, marginTop: 10, borderRadius: 12, backgroundColor: "rgba(239,68,68,0.08)" },
   permissionErrorText: { color: COLORS.red, fontSize: 12 },
@@ -295,9 +387,5 @@ const styles = StyleSheet.create({
   permissionValue: { color: COLORS.orange, fontSize: 12, fontWeight: "700" },
   permissionButton: { minHeight: 48, alignItems: "center", justifyContent: "center", marginTop: 10, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue },
   permissionButtonText: { color: COLORS.white, fontSize: 13, fontWeight: "700" },
-  refreshButton: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, marginTop: 20, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue },
   pressed: { opacity: 0.82 },
-  refreshCopy: { flex: 1 },
-  refreshTitle: { color: palette.white, fontSize: 14, fontWeight: "700" },
-  refreshCaption: { marginTop: 3, color: "#DBEAFE", fontSize: 12 },
 });

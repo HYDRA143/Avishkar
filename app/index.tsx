@@ -1,15 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
+  StatusBar,
 } from "react-native";
-import { Link, Stack } from "expo-router";
+import { Link, Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { recordUnoUsage } from "./deviceUsageHistory";
 import { AppHeader, AppIcon, COLORS, ErrorCard, LoadingSkeleton, NetworkLineGraph, type MaterialIconName } from "./_components/design";
+import { getUsageMonitorState } from "../src/features/wifi-monitor/usageAlerts";
+import { useAutoRefresh } from "./_components/useAutoRefresh";
+import type { UsageMonitorState } from "../src/features/wifi-monitor/usageAlerts";
 
 export type DeviceInfo = {
   id: string;
@@ -55,7 +59,6 @@ type PreviousBandwidth = {
 type DashboardData = {
   loading: boolean;
   error: string | null;
-  monitorReady: boolean | null;
   devices: ReadonlyArray<DeviceInfo>;
   bandwidth: BandwidthInfo;
   speed: SpeedPoint | null;
@@ -174,16 +177,7 @@ export const deviceCategoryColor = (category: DeviceCategory): { background: str
 };
 
 export const remoteSourceLabel = (baseUrl: string): string => {
-  if (!baseUrl) return "Remote source unavailable";
-  try {
-    const url = new URL(baseUrl);
-    const source = url.hostname.endsWith(".trycloudflare.com")
-      ? "Cloudflare Tunnel"
-      : "Remote API";
-    return `${source} - ${url.toString().replace(/\/$/, "")}`;
-  } catch {
-    return `Remote API - ${baseUrl}`;
-  }
+  return baseUrl ? "Connected - Main Network" : "Disconnected";
 };
 
 export const parseDevices = (payload: unknown): ReadonlyArray<DeviceInfo> =>
@@ -232,7 +226,7 @@ export const parseBandwidth = (payload: unknown): BandwidthInfo => {
   return { interfaceName, ...counters };
 };
 
-export function DeviceRow({ device, divider = false }: { device: DeviceInfo; divider?: boolean }) {
+export function DeviceRow({ device, divider = false, name }: { device: DeviceInfo; divider?: boolean; name?: string }) {
   const color = deviceCategoryColor(device.identity.category);
   const icon: MaterialIconName = device.identity.category === "uno"
     ? "security"
@@ -258,7 +252,7 @@ export function DeviceRow({ device, divider = false }: { device: DeviceInfo; div
       </View>
       <View style={styles.deviceCopy}>
         <View style={styles.deviceTitleRow}>
-          <Text style={styles.deviceName}>{device.identity.name}</Text>
+          <Text style={styles.deviceName}>{name || device.identity.name}</Text>
           <View style={styles.deviceStatusWrap}>
             {device.reachable === null ? null : <AppIcon name={device.reachable ? "check-circle" : "error"} size={15} color={device.reachable ? COLORS.green : COLORS.red} />}
             <Text style={[styles.deviceStatus, device.reachable === true && styles.deviceOnline, device.reachable === false && styles.deviceOffline]}>
@@ -321,16 +315,26 @@ export const formatSpeed = (bytesPerSecond: number): string => {
   return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
 };
 
-function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: () => void }) {
+function Dashboard({
+  refreshKey,
+  intervalSeconds,
+  mode,
+}: {
+  refreshKey: number;
+  intervalSeconds: number;
+  mode: "home" | "devices";
+}) {
   const [data, setData] = useState<DashboardData>({
     loading: true,
     error: null,
-    monitorReady: null,
     devices: [],
     bandwidth: null,
     speed: null,
     speedHistory: [],
   });
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [alerts, setAlerts] = useState<UsageMonitorState["recentAlerts"]>([]);
+  const [deviceNames, setDeviceNames] = useState<Record<string, string>>({});
   const previousBandwidth = useRef<PreviousBandwidth | null>(null);
 
   useEffect(() => {
@@ -341,7 +345,6 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
         setData({
           loading: false,
           error: "Mobile API configuration is missing",
-          monitorReady: null,
           devices: [],
           bandwidth: null,
           speed: null,
@@ -351,14 +354,11 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
       }
       setData((current) => ({ ...current, loading: current.bandwidth === null, error: null }));
       try {
-        const [status, devices, bandwidth] = await Promise.all([
-          fetchJson(`${base}/api/status`, key, controller.signal),
+        const [devices, bandwidth] = await Promise.all([
           fetchJson(`${base}/api/devices`, key, controller.signal),
           fetchJson(`${base}/api/usage`, key, controller.signal),
         ]);
         if (controller.signal.aborted) return;
-        const statusRecord = asRecord(status);
-        const guard = asRecord(statusRecord?.guard);
         const currentBandwidth = parseBandwidth(bandwidth);
         const now = Date.now();
         if (currentBandwidth) recordUnoUsage(currentBandwidth, now);
@@ -376,7 +376,6 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
           ...current,
           loading: false,
           error: null,
-          monitorReady: typeof guard?.ready === "boolean" ? guard.ready : null,
           devices: parseDevices(devices),
           bandwidth: currentBandwidth,
           speed: sample,
@@ -384,238 +383,158 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
             ? [...current.speedHistory, sample].slice(-7)
             : current.speedHistory,
         }));
+        setLastUpdated(now);
+        void getUsageMonitorState().then((monitor) => {
+          setAlerts(monitor.recentAlerts.slice(0, 2));
+        }).catch((caught: unknown) => {
+          console.error("Unable to load recent usage alerts", caught);
+        });
       } catch (error) {
         if (!controller.signal.aborted) {
           setData((current) => ({
             ...current,
             loading: false,
             error: error instanceof Error ? error.message : "Unable to load network data",
-            monitorReady: null,
           }));
         }
       }
     };
     void load();
-    const interval = setInterval(() => void load(), 30_000);
     return () => {
       controller.abort();
-      clearInterval(interval);
     };
   }, [refreshKey]);
 
-  const sentBytes = data.bandwidth?.sentBytes ?? null;
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    void import("./_components/preferences").then(({ readDeviceNames }) => readDeviceNames())
+      .then((names) => { if (active) setDeviceNames(names); })
+      .catch((caught: unknown) => console.error("Unable to load saved device names", caught));
+    return () => { active = false; };
+  }, []));
+
   const totalBytes = data.bandwidth
     ? data.bandwidth.receivedBytes + data.bandwidth.sentBytes
     : null;
-  const actions: ReadonlyArray<{ href: "/graph" | "/reports" | "/status" | "/alerts" | "/settings"; icon: MaterialIconName; title: string; subtitle: string }> = [
-    { href: "/graph", icon: "show-chart", title: "Usage graph", subtitle: "Explore live traffic" },
-    { href: "/reports", icon: "assessment", title: "Reports", subtitle: "Review network snapshots" },
-    { href: "/status", icon: "devices", title: "System status", subtitle: "Inspect monitor health" },
-    { href: "/alerts", icon: "notifications-active", title: "Usage alerts", subtitle: "Set hourly, daily, and weekly caps" },
-    { href: "/settings", icon: "settings", title: "Settings", subtitle: "Manage local preferences" },
-  ];
-  const { base } = apiConfig();
-  const gateway = data.devices.find((device) => device.identity.category === "gateway");
-  const networkSource = gateway
-    ? `Main Network ${gateway.ipAddress}`
-    : "Main Network · gateway not identified";
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
-      <View style={styles.content}>
-        <AppHeader liveStatus={data.error ? "OFFLINE" : data.loading ? "SYNCING" : data.bandwidth ? "LIVE" : "IDLE"} />
-        <Text style={styles.intro}>Your network, monitored and in view.</Text>
-
-        {data.error ? <ErrorCard title="Live data unavailable" message={data.error} onRetry={onRefresh} /> : null}
-
-        <View style={styles.hero}>
-          <View style={styles.usageHeading}>
-            <AppIcon name="data-usage" size={22} color={COLORS.blue} />
-            <Text style={styles.usageTitle}>Total Usage</Text>
-            <View style={styles.liveTag}>
-              <View style={[styles.liveDot, data.speed && data.speed.down + data.speed.up > 0 ? styles.liveDotActive : styles.liveDotIdle]} />
-              <Text style={[styles.liveText, data.speed && data.speed.down + data.speed.up > 0 ? styles.liveTextActive : styles.liveTextIdle]}>
-                {data.speed ? data.speed.down + data.speed.up > 0 ? "LIVE" : "IDLE" : "WAITING"}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.usageValueLarge}>{totalBytes === null ? data.loading ? "Loading…" : "No data" : formatBytes(totalBytes)}</Text>
-          <Text style={styles.heroDetail}>Uno wlan0 cumulative total · not per-device</Text>
-          <View style={styles.heroRule} />
-          <View style={styles.liveSpeedRow}>
-            <View style={styles.liveSpeedLabelRow}>
-              <AppIcon name="speed" size={18} color={COLORS.gold} />
-              <Text style={styles.liveSpeedLabel}>Live speed</Text>
-            </View>
-            <Text style={styles.speedValue}>
-              {data.speed === null
-                ? data.bandwidth ? "Measuring…" : "No data"
-                : data.speed.down === 0 && data.speed.up === 0
-                  ? "Idle"
-                  : formatSpeed(data.speed.down + data.speed.up)}
-            </Text>
-          </View>
-          <Text style={styles.guardStatus}>
-            Guard status: {data.loading ? "Checking…" : data.monitorReady === null ? "Unavailable" : data.monitorReady ? "Ready" : "Not ready"}
-          </Text>
-        </View>
-
-        <View style={styles.sectionHeading}>
-          <View>
-            <View style={styles.sectionTitleRow}>
-              <AppIcon name="devices" size={19} color={COLORS.gold} />
-              <Text style={styles.sectionTitle}>Devices</Text>
-            </View>
-            <Text style={styles.sectionCaption}>
-              {data.devices.length} discovered · per-device usage unavailable
-            </Text>
-          </View>
-          <View style={styles.liveTag}><View style={styles.liveDot} /><Text style={styles.liveText}>LIVE</Text></View>
-        </View>
-        <View style={styles.sourceBadge}>
-          <Text style={styles.sourceBadgeText}>Source: {networkSource} | Remote: {remoteSourceLabel(base)}</Text>
-        </View>
-        <View style={styles.card}>
-          {data.devices.length > 0 ? data.devices.map((device, index) => (
-            <DeviceRow key={device.id} device={device} divider={index > 0} />
-          )) : (
-            <View style={styles.emptyState}>
-              <View style={styles.emptyIcon}><AppIcon name="devices" size={23} color={COLORS.gold} /></View>
-              <Text style={styles.emptyTitle}>{data.loading ? "Scanning device inventory" : "No devices reporting"}</Text>
-              <Text style={styles.emptyBody}>
-                {data.loading
-                  ? "Your live device list will appear here."
-                  : "When the gateway reports devices, they’ll appear here."}
-              </Text>
-              {data.loading ? <LoadingSkeleton lines={2} /> : null}
-            </View>
-          )}
-        </View>
-        <View style={styles.sectionHeading}>
-          <View>
-            <Text style={styles.sectionTitle}>Live Network</Text>
-            <Text style={styles.sectionCaption}>Last 7 samples · ~30s · speed in KB/s · Uno wlan0</Text>
-          </View>
-          <AppIcon name="show-chart" size={21} color={COLORS.gold} />
-        </View>
-        <View style={styles.card}>
-          {data.speedHistory.length > 0 ? (
-            <NetworkLineGraph
-              values={data.speedHistory.map((point) => point.down + point.up)}
-              labels={data.speedHistory.map((point) => new Date(point.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}
-            />
+    <SafeAreaView style={styles.safeArea} edges={["top", "bottom", "left", "right"]}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
+          <Stack.Screen options={{ headerShown: false }} />
+          <AppHeader liveStatus={data.error ? "Disconnected" : data.bandwidth ? "Connected - Main Network" : "SYNCING"} />
+          {mode === "devices" ? (
+            <>
+              <Text style={styles.title}>Devices ({data.devices.length})</Text>
+              <Text style={styles.sectionCaption}>Live devices · tap a device to open its details.</Text>
+              <View style={styles.card}>
+                {data.devices.length > 0 ? data.devices.map((device, index) => (
+                  <DeviceRow key={device.id} device={device} divider={index > 0} name={deviceNames[device.ipAddress]} />
+                )) : <EmptyDevices loading={data.loading} />}
+              </View>
+              {data.error ? <ErrorCard title="Live data unavailable" message={data.error} /> : null}
+            </>
           ) : (
-            <Text style={styles.chartUnavailable}>No measured speed intervals yet.</Text>
-          )}
-        </View>
-        <View style={styles.scopeNotice}>
-          <Text style={styles.scopeNoticeTitle}>Device usage is not available yet</Text>
-          <Text style={styles.scopeNoticeBody}>
-            This Uno monitors Wi-Fi as a client. The list above is device discovery only; bandwidth totals measure Uno's wlan0 interface, not each phone or laptop.
-          </Text>
-        </View>
-
-        <View style={styles.sectionHeading}>
-          <View>
-            <Text style={styles.sectionTitle}>Bandwidth</Text>
-            <Text style={styles.sectionCaption}>Real interface counters from this Uno device</Text>
-          </View>
-        </View>
-        <View style={styles.card}>
-          <View style={styles.bandwidthTotals}>
-            <View style={styles.usageTotalBlock}>
-              <Text style={styles.usageLabel}>UNO WLAN TOTAL</Text>
-              <Text style={styles.usageValue}>
-                {totalBytes === null ? "No data" : formatBytes(totalBytes)}
-              </Text>
-            </View>
-            <View style={styles.speedBlock}>
-              <Text style={styles.usageLabel}>LIVE SPEED</Text>
-              <Text style={styles.speedValue}>
-                {data.speed === null
-                  ? data.bandwidth ? "Measuring…" : "No data"
-                  : data.speed.down === 0 && data.speed.up === 0
-                    ? "Idle"
-                    : `${formatSpeed(data.speed.down)} Down • ${formatSpeed(data.speed.up)} Up`}
-              </Text>
-            </View>
-          </View>
-          {data.bandwidth ? (
-            <View style={styles.bandwidthList}>
-              <View style={styles.interfaceRow}>
-                <View style={styles.interfaceLine}>
-                  <Text style={styles.interfaceName}>{data.bandwidth.interfaceName}</Text>
-                  <Text style={styles.interfaceBytes}>
-                    {formatBytes(data.bandwidth.receivedBytes + data.bandwidth.sentBytes)} total
+            <>
+              <View style={styles.sectionHeading}>
+                <View style={styles.sectionTitleRow}>
+                  <AppIcon name="data-usage" size={20} color={COLORS.blue} />
+                  <Text style={styles.sectionTitle}>Total Usage</Text>
+                </View>
+              </View>
+              <View style={styles.hero}>
+                <Text style={styles.usageValueLarge}>
+                  {totalBytes === null ? data.loading ? "Loading…" : "No data" : formatBytes(totalBytes)}
+                </Text>
+                <Text style={styles.heroDetail}>Uno wlan0 cumulative total</Text>
+                <View style={styles.liveSpeedRow}>
+                  <Text style={styles.liveSpeedLabel}>Live speed</Text>
+                  <Text style={styles.speedValue}>
+                    {data.speed === null
+                      ? data.bandwidth ? "Measuring…" : "No data"
+                      : data.speed.down === 0 && data.speed.up === 0
+                        ? "Idle"
+                        : formatSpeed(data.speed.down + data.speed.up)}
                   </Text>
                 </View>
-                <View style={styles.progressTrack}>
-                  <View style={[styles.progressFill, { width: "100%" }]} />
-                </View>
-                {sentBytes !== null ? (
-                  <View style={styles.interfaceTotals}>
-                    <Text style={styles.interfaceBytes}>Down {formatBytes(data.bandwidth.receivedBytes)}</Text>
-                    <Text style={styles.interfaceBytes}>Up {formatBytes(data.bandwidth.sentBytes)}</Text>
-                  </View>
-                ) : null}
+                <Text style={styles.autoRefreshLabel}>Auto refresh: {intervalSeconds}s</Text>
+                <Text style={styles.lastUpdated}>
+                  Last updated: {lastUpdated === null ? "Waiting for data" : new Date(lastUpdated).toLocaleTimeString()}
+                </Text>
+                {data.error ? <ErrorCard title="Live data unavailable" message={data.error} /> : null}
               </View>
-            </View>
-          ) : (
-            <View style={styles.chartEmpty}>
-              <Text style={styles.emptyBody}>
-                {data.loading ? "Loading gateway counters…" : "Bandwidth counters aren’t available yet."}
-              </Text>
-              {data.loading ? <ActivityIndicator color={palette.cyan} /> : null}
-            </View>
+
+              <Link href="/graph" asChild>
+                <Pressable style={({ pressed }) => [styles.card, pressed && styles.actionPressed]}>
+                  <View style={styles.sectionHeading}>
+                    <Text style={styles.sectionTitle}>Live Graph Preview</Text>
+                    <AppIcon name="arrow-forward" size={18} color={COLORS.secondary} />
+                  </View>
+                  {data.speedHistory.length > 0 ? (
+                    <NetworkLineGraph
+                      values={data.speedHistory.map((point) => point.down + point.up)}
+                      labels={data.speedHistory.map((point) => new Date(point.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}
+                    />
+                  ) : <Text style={styles.chartUnavailable}>No measured speed intervals yet.</Text>}
+                </Pressable>
+              </Link>
+
+              <View style={styles.sectionHeading}>
+                <Text style={styles.sectionTitle}>Devices ({data.devices.length})</Text>
+                <Link href="/?view=devices" asChild>
+                  <Pressable><Text style={styles.viewAll}>View all</Text></Pressable>
+                </Link>
+              </View>
+              <View style={styles.card}>
+                {data.devices.length > 0 ? data.devices.map((device, index) => (
+                  <DeviceRow key={device.id} device={device} divider={index > 0} name={deviceNames[device.ipAddress]} />
+                )) : <EmptyDevices loading={data.loading} />}
+              </View>
+
+              <View style={styles.sectionHeading}>
+                <Text style={styles.sectionTitle}>Alerts</Text>
+                <Link href="/reports" asChild>
+                  <Pressable><Text style={styles.viewAll}>View All</Text></Pressable>
+                </Link>
+              </View>
+              <View style={styles.card}>
+                {alerts.length > 0 ? alerts.map((alert) => (
+                  <View key={alert.id} style={styles.alertRow}>
+                    <AppIcon name="notifications-active" size={18} color={COLORS.orange} />
+                    <View style={styles.deviceCopy}>
+                      <Text style={styles.deviceName}>{alert.title}</Text>
+                      <Text style={styles.alertBody} numberOfLines={2}>{alert.body}</Text>
+                    </View>
+                    <Text style={styles.alertTime}>{new Date(alert.at).toLocaleTimeString()}</Text>
+                  </View>
+                )) : <Text style={styles.noAlerts}>No recent alerts recorded.</Text>}
+              </View>
+            </>
           )}
         </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
 
-        <View style={styles.sectionHeading}>
-          <View>
-            <Text style={styles.sectionTitle}>Quick access</Text>
-            <Text style={styles.sectionCaption}>Network tools at a glance</Text>
-          </View>
-        </View>
-        <View style={styles.actionsGrid}>
-          {actions.map((action) => (
-            <Link key={action.href} href={action.href} asChild>
-              <Pressable style={({ pressed }) => [styles.action, pressed && styles.actionPressed]}>
-                <View style={styles.actionTop}>
-                  <View style={styles.actionIcon}><AppIcon name={action.icon} size={20} color={COLORS.gold} /></View>
-                  <AppIcon name="arrow-forward" size={17} color={COLORS.secondary} />
-                </View>
-                <Text style={styles.actionTitle}>{action.title}</Text>
-                <Text style={styles.actionCaption}>{action.subtitle}</Text>
-              </Pressable>
-            </Link>
-          ))}
-        </View>
-
-        <Pressable
-          onPress={onRefresh}
-          style={({ pressed }) => [styles.refreshButton, pressed && styles.refreshPressed]}
-          accessibilityRole="button"
-          accessibilityLabel="Refresh network data"
-        >
-          <AppIcon name="refresh" size={22} color={COLORS.white} />
-          <View style={styles.refreshCopy}>
-            <Text style={styles.refreshTitle}>Refresh network data</Text>
-            <Text style={styles.refreshCaption}>Fetch the latest device and traffic telemetry</Text>
-          </View>
-          <AppIcon name="arrow-forward" size={18} color={COLORS.white} />
-        </Pressable>
-        <Text style={styles.footer}>NETGUARD · PRIVATE BY DESIGN</Text>
-      </View>
-    </ScrollView>
+function EmptyDevices({ loading }: { loading: boolean }) {
+  return (
+    <View style={styles.emptyState}>
+      <View style={styles.emptyIcon}><AppIcon name="devices" size={23} color={COLORS.gold} /></View>
+      <Text style={styles.emptyTitle}>{loading ? "Scanning device inventory" : "No devices reporting"}</Text>
+      {loading ? <LoadingSkeleton lines={2} /> : null}
+    </View>
   );
 }
 
 export default function Home() {
-  const [refreshKey, setRefreshKey] = useState(0);
+  const { view } = useLocalSearchParams<{ view?: string }>();
+  const { refreshKey, intervalSeconds } = useAutoRefresh();
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <Dashboard refreshKey={refreshKey} onRefresh={() => setRefreshKey((key) => key + 1)} />
+      <Dashboard refreshKey={refreshKey} intervalSeconds={intervalSeconds} mode={view === "devices" ? "devices" : "home"} />
     </>
   );
 }
@@ -634,6 +553,7 @@ const palette = {
 };
 
 const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: palette.background },
   screen: { flex: 1, backgroundColor: palette.background },
   page: { alignItems: "center", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 38 },
   content: { width: "100%", maxWidth: 820 },
@@ -662,6 +582,14 @@ const styles = StyleSheet.create({
   statusDotOffline: { backgroundColor: palette.red },
   statusText: { color: palette.secondary, fontSize: 12, fontWeight: "800", letterSpacing: 0.7 },
   intro: { marginTop: 18, marginBottom: 18, color: palette.secondary, fontSize: 12 },
+  title: { marginBottom: 7, color: palette.white, fontSize: 22, fontWeight: "800" },
+  autoRefreshLabel: { marginTop: 16, color: "#DBEAFE", fontSize: 12, fontWeight: "700" },
+  lastUpdated: { marginTop: 5, color: palette.secondary, fontSize: 12 },
+  viewAll: { color: "#60A5FA", fontSize: 13, fontWeight: "700" },
+  alertRow: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.border },
+  alertBody: { marginTop: 4, color: palette.secondary, fontSize: 12, lineHeight: 16 },
+  alertTime: { color: palette.muted, fontSize: 11 },
+  noAlerts: { paddingVertical: 12, color: palette.muted, fontSize: 13 },
   errorBanner: {
     flexDirection: "row", alignItems: "center", gap: 10, padding: 13, marginBottom: 16,
     borderRadius: 14, backgroundColor: "rgba(239,68,68,0.08)", borderWidth: 1, borderColor: "rgba(239,68,68,0.2)",
@@ -739,8 +667,6 @@ const styles = StyleSheet.create({
   deviceStatus: { color: palette.muted, fontSize: 12, fontWeight: "700" },
   deviceOnline: { color: "#6EE7B7" },
   deviceOffline: { color: "#FCA5A5" },
-  sourceBadge: { padding: 12, marginBottom: 10, borderRadius: 12, backgroundColor: COLORS.darkBlue, borderWidth: 1, borderColor: "rgba(26,86,219,0.4)" },
-  sourceBadgeText: { color: "#DBEAFE", fontSize: 12, lineHeight: 18 },
   emptyState: { minHeight: 158, alignItems: "center", justifyContent: "center", paddingVertical: 20 },
   emptyIcon: { width: 40, height: 40, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(99,102,241,0.15)" },
   emptyGlyph: { color: "#A5B4FC", fontSize: 23 },
@@ -769,11 +695,6 @@ const styles = StyleSheet.create({
   actionIcon: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(26,86,219,0.19)", borderWidth: 1, borderColor: "rgba(26,86,219,0.28)" },
   actionTitle: { color: "#F1F5F9", fontSize: 14, fontWeight: "700" },
   actionCaption: { marginTop: 5, color: palette.muted, fontSize: 12, lineHeight: 16 },
-  refreshButton: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, marginTop: 22, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue, shadowColor: palette.indigo, shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 5 },
-  refreshPressed: { opacity: 0.82 },
-  refreshCopy: { flex: 1 },
-  refreshTitle: { color: palette.white, fontSize: 14, fontWeight: "700" },
-  refreshCaption: { marginTop: 3, color: "#DBEAFE", fontSize: 12 },
   footer: { marginTop: 23, color: palette.secondary, fontSize: 12, fontWeight: "700", letterSpacing: 1.2, textAlign: "center" },
   chartUnavailable: { minHeight: 160, padding: 16, color: palette.secondary, fontSize: 13, textAlign: "center", textAlignVertical: "center" },
 });
