@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Link, Stack } from "expo-router";
+import { Stack } from "expo-router";
 import {
   apiConfig,
   DeviceRow,
   fetchJson,
   formatBytes,
+  remoteSourceLabel,
   parseBandwidth,
   parseDevices,
   type DeviceInfo,
   type BandwidthInfo,
 } from "./index";
+import { AppHeader, AppIcon, COLORS, ErrorCard, LoadingSkeleton } from "./_components/design";
 
 type StatusData = {
   loading: boolean;
@@ -81,45 +83,21 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
   const totalBandwidth = state.bandwidth
     ? state.bandwidth.receivedBytes + state.bandwidth.sentBytes
     : null;
-  const rows = [
-    {
-      title: "Discovered devices",
-      value: state.loading ? "Checking…" : state.error ? "Unavailable" : `${state.devices.length} found`,
-      good: state.fetchSucceeded,
-    },
-    {
-      title: "Uno wlan0 total",
-      value: state.loading
-        ? "Checking…"
-        : state.error
-          ? "Unavailable"
-          : totalBandwidth === null
-            ? "No data"
-            : formatBytes(totalBandwidth),
-      good: state.fetchSucceeded && state.bandwidth !== null,
-    },
-  ];
+  const remoteSource = remoteSourceLabel(apiConfig().base);
+  const isTunnel = remoteSource.startsWith("Cloudflare Tunnel");
+  const tunnelStatus = isTunnel
+    ? state.fetchSucceeded ? "Connected" : state.loading ? "Checking…" : "Unavailable"
+    : "Not configured";
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
       <View style={styles.content}>
         <Stack.Screen options={{ headerShown: false }} />
-        <View style={styles.header}>
-          <Link href="/" asChild><Pressable style={styles.back}><Text style={styles.backGlyph}>‹</Text></Pressable></Link>
-          <View style={styles.headerCopy}>
-            <Text style={styles.kicker}>NETGUARD · MONITORING</Text>
-            <Text style={styles.title}>System status</Text>
-          </View>
-          <View style={styles.headerMark}><Text style={styles.headerMarkText}>N</Text></View>
-        </View>
+        <AppHeader back liveStatus={state.error ? "OFFLINE" : state.loading ? "SYNCING" : state.fetchSucceeded ? "LIVE" : "IDLE"} />
+        <View style={styles.titleRow}><AppIcon name="devices" color={COLORS.gold} size={22} /><Text style={styles.title}>System status</Text></View>
         <Text style={styles.subtitle}>Live device discovery and Uno wlan0 counters. Per-device usage is unavailable.</Text>
 
-        {state.error ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Status check failed</Text>
-            <Text style={styles.errorText}>{state.error}</Text>
-          </View>
-        ) : null}
+        {state.error ? <ErrorCard title="Status check failed" message={state.error} onRetry={onRefresh} /> : null}
 
         <View style={styles.hero}>
           <View style={styles.heroGlow} />
@@ -147,49 +125,43 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
 
         <View style={styles.sectionHeader}>
           <View>
-            <Text style={styles.sectionTitle}>Health overview</Text>
-            <Text style={styles.sectionCaption}>Counters reported by the Uno interface</Text>
+            <Text style={styles.sectionTitle}>Devices ({state.devices.length})</Text>
+            <Text style={styles.sectionCaption}>Live discovery · per-device usage is not reported</Text>
           </View>
-          <View style={styles.liveTag}><View style={styles.liveDot} /><Text style={styles.liveText}>LIVE</Text></View>
+          <AppIcon name="devices" color={COLORS.gold} size={21} />
+        </View>
+        <View style={styles.deviceList}>
+          {state.loading && state.devices.length === 0 ? <LoadingSkeleton lines={3} /> : state.devices.length > 0
+            ? state.devices.map((device, index) => <DeviceRow key={device.id} device={device} divider={index > 0} />)
+            : <Text style={styles.noDevices}>{state.loading ? "Loading live device list…" : state.error ? "Device discovery unavailable." : "No real devices reported."}</Text>}
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionTitle}>Bandwidth</Text>
+            <Text style={styles.sectionCaption}>Uno wlan0 counters · not per-device</Text>
+          </View>
+          <AppIcon name="data-usage" color={COLORS.blue} size={21} />
         </View>
         <View style={styles.statusCard}>
-          {rows.map((row, index) => (
-            <View key={row.title} style={[styles.statusRow, index > 0 && styles.rowDivider]}>
-              <View style={styles.rowLabel}>
-                <View style={[
-                  styles.rowDot,
-                  row.good === true && styles.rowDotGood,
-                  row.good === false && styles.rowDotBad,
-                ]} />
-                <Text style={styles.rowTitle}>{row.title}</Text>
-              </View>
-              <View style={styles.sectionHeader}>
-                <View>
-                  <Text style={styles.sectionTitle}>Device identities</Text>
-                  <Text style={styles.sectionCaption}>Names use exact IP and MAC matches from the live response.</Text>
-                </View>
-              </View>
-              <View style={styles.deviceList}>
-                {state.devices.length > 0
-                  ? state.devices.map((device, index) => <DeviceRow key={device.id} device={device} divider={index > 0} />)
-                  : <Text style={styles.noDevices}>{state.loading ? "Loading live device list…" : state.error ? "Device discovery unavailable." : "No real devices reported."}</Text>}
-              </View>
-              <Text style={[
-                styles.rowValue,
-                row.good === true && styles.rowValueGood,
-                row.good === false && styles.rowValueBad,
-              ]}>{row.value}</Text>
-            </View>
-          ))}
+          <View style={styles.statusRow}>
+            <Text style={styles.rowTitle}>Uno-only total</Text>
+            <Text style={styles.rowValue}>{totalBandwidth === null ? state.loading ? "Checking…" : "No data" : formatBytes(totalBandwidth)}</Text>
+          </View>
+          <View style={[styles.statusRow, styles.rowDivider]}>
+            <Text style={styles.rowTitle}>Tunnel</Text>
+            <Text style={[styles.rowValue, tunnelStatus === "Connected" && styles.rowValueGood]}>{tunnelStatus}</Text>
+          </View>
+          <Text style={styles.sourceValue}>{remoteSource}</Text>
         </View>
 
         <Pressable onPress={onRefresh} style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}>
-          <Text style={styles.refreshGlyph}>↻</Text>
+          <AppIcon name="refresh" size={21} color={COLORS.white} />
           <View style={styles.refreshCopy}>
             <Text style={styles.refreshTitle}>Refresh network data</Text>
             <Text style={styles.refreshCaption}>Fetch the latest device and traffic telemetry</Text>
           </View>
-          <Text style={styles.refreshArrow}>→</Text>
+          <AppIcon name="arrow-forward" size={18} color={COLORS.white} />
         </Pressable>
       </View>
     </ScrollView>
@@ -201,67 +173,67 @@ export default function Status() {
   return <StatusView refreshKey={refreshKey} onRefresh={() => setRefreshKey((key) => key + 1)} />;
 }
 
-const palette = { background: "#080B14", white: "#FFFFFF", muted: "#64748B", secondary: "#94A3B8", indigo: "#6366F1", cyan: "#22D3EE" };
+const palette = { background: COLORS.background, white: COLORS.white, muted: COLORS.secondary, secondary: COLORS.secondary, indigo: COLORS.blue, cyan: COLORS.gold };
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.background },
-  page: { alignItems: "center", padding: 16, paddingTop: 22, paddingBottom: 36 },
+  page: { alignItems: "center", padding: 16, paddingTop: 16, paddingBottom: 36 },
   content: { width: "100%", maxWidth: 820 },
   header: { flexDirection: "row", alignItems: "center", gap: 12 },
   back: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
   backGlyph: { color: palette.white, fontSize: 28, lineHeight: 31 },
   headerCopy: { flex: 1 },
   kicker: { color: "#A5B4FC", fontSize: 8, fontWeight: "800", letterSpacing: 1.5 },
-  title: { marginTop: 3, color: palette.white, fontSize: 23, fontWeight: "800" },
+  title: { marginTop: 0, color: palette.white, fontSize: 23, fontWeight: "800" },
   headerMark: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(99,102,241,0.2)", borderWidth: 1, borderColor: "rgba(129,140,248,0.3)" },
   headerMarkText: { color: palette.cyan, fontWeight: "800", fontSize: 17 },
-  subtitle: { marginTop: 14, marginBottom: 18, color: palette.secondary, fontSize: 11 },
+  subtitle: { marginTop: 14, marginBottom: 18, color: palette.secondary, fontSize: 12 },
   errorCard: { padding: 13, marginBottom: 14, borderRadius: 14, backgroundColor: "rgba(239,68,68,0.08)", borderWidth: 1, borderColor: "rgba(239,68,68,0.2)" },
-  errorTitle: { color: "#FCA5A5", fontSize: 12, fontWeight: "700" },
-  errorText: { marginTop: 4, color: palette.secondary, fontSize: 10, lineHeight: 15 },
-  hero: { overflow: "hidden", padding: 18, borderRadius: 21, backgroundColor: "#11162B", borderWidth: 1, borderColor: "rgba(129,140,248,0.28)" },
+  errorTitle: { color: COLORS.red, fontSize: 14, fontWeight: "700" },
+  errorText: { marginTop: 4, color: palette.secondary, fontSize: 12, lineHeight: 18 },
+  hero: { overflow: "hidden", padding: 18, borderRadius: 16, backgroundColor: COLORS.darkBlue, borderWidth: 1, borderColor: "rgba(26,86,219,0.4)" },
   heroGlow: { position: "absolute", top: -90, right: -40, width: 190, height: 190, borderRadius: 95, backgroundColor: "rgba(34,211,238,0.07)" },
   heroTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  eyebrow: { color: "#A5B4FC", fontSize: 8, fontWeight: "800", letterSpacing: 1.5 },
+  eyebrow: { color: COLORS.secondary, fontSize: 12, fontWeight: "800", letterSpacing: 1.2 },
   heroTitle: { marginTop: 9, color: palette.white, fontSize: 22, fontWeight: "800" },
-  heroCaption: { marginTop: 5, color: palette.secondary, fontSize: 10 },
+  heroCaption: { marginTop: 5, color: palette.secondary, fontSize: 12 },
   heroDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: "#EF4444" },
-  heroDotOnline: { backgroundColor: "#10B981" },
+  heroDotOnline: { backgroundColor: COLORS.green },
   heroRule: { height: 1, marginTop: 17, backgroundColor: "rgba(255,255,255,0.1)" },
-  guardLine: { marginTop: 12, color: "#C7D2FE", fontSize: 10, fontWeight: "600" },
+  guardLine: { marginTop: 12, color: "#DBEAFE", fontSize: 12, fontWeight: "600" },
   sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 23, marginBottom: 11 },
   sectionTitle: { color: palette.white, fontSize: 15, fontWeight: "700" },
-  sectionCaption: { marginTop: 4, color: palette.muted, fontSize: 10 },
-  liveTag: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 99, backgroundColor: "rgba(16,185,129,0.09)" },
-  liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#10B981" },
-  liveText: { color: "#6EE7B7", fontSize: 8, fontWeight: "800", letterSpacing: 0.7 },
-  statusCard: { paddingHorizontal: 14, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
-  deviceList: { padding: 8, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.04)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
-  noDevices: { padding: 14, color: palette.muted, fontSize: 10 },
+  sectionCaption: { marginTop: 4, color: palette.muted, fontSize: 12 },
+  liveTag: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 99, backgroundColor: "rgba(245,179,1,0.1)" },
+  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: COLORS.gold },
+  liveText: { color: COLORS.gold, fontSize: 12, fontWeight: "800", letterSpacing: 0.7 },
+  statusCard: { padding: 16, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
+  deviceList: { padding: 12, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
+  noDevices: { padding: 14, color: palette.muted, fontSize: 13 },
   statusRow: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   rowDivider: { borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.07)" },
   rowLabel: { flexDirection: "row", alignItems: "center", gap: 9 },
   rowDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#F59E0B" },
-  rowDotGood: { backgroundColor: "#10B981" },
+  rowDotGood: { backgroundColor: COLORS.green },
   rowDotBad: { backgroundColor: "#EF4444" },
-  rowTitle: { color: "#E2E8F0", fontSize: 11, fontWeight: "600" },
-  rowValue: { color: palette.secondary, fontSize: 10, fontWeight: "700" },
-  rowValueGood: { color: "#6EE7B7" },
+  rowTitle: { color: "#E2E8F0", fontSize: 14, fontWeight: "600" },
+  rowValue: { color: palette.secondary, fontSize: 14, fontWeight: "700" },
+  rowValueGood: { color: COLORS.green },
   rowValueBad: { color: "#FCA5A5" },
-  healingCard: { flexDirection: "row", alignItems: "center", gap: 11, padding: 14, marginTop: 14, borderRadius: 17, backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
+  healingCard: { flexDirection: "row", alignItems: "center", gap: 11, padding: 16, marginTop: 14, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
   healingIcon: { width: 40, height: 40, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(99,102,241,0.17)" },
   healingGlyph: { color: "#A5B4FC", fontSize: 21 },
   healingCopy: { flex: 1 },
   healingTitle: { color: "#F1F5F9", fontSize: 12, fontWeight: "700" },
-  healingDetail: { marginTop: 4, color: palette.muted, fontSize: 9, lineHeight: 14 },
+  healingDetail: { marginTop: 4, color: palette.muted, fontSize: 12, lineHeight: 17 },
   healingBadge: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 99, backgroundColor: "rgba(245,158,11,0.08)" },
-  healingBadgeActive: { backgroundColor: "rgba(16,185,129,0.1)" },
-  healingBadgeText: { color: "#FCD34D", fontSize: 8, fontWeight: "800" },
-  healingBadgeTextActive: { color: "#6EE7B7" },
-  refreshButton: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, marginTop: 19, borderRadius: 17, backgroundColor: "#252A66", borderWidth: 1, borderColor: "rgba(129,140,248,0.34)" },
+  healingBadgeActive: { backgroundColor: "rgba(34,197,94,0.1)" },
+  healingBadgeText: { color: COLORS.orange, fontSize: 12, fontWeight: "800" },
+  healingBadgeTextActive: { color: COLORS.green },
+  refreshButton: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, marginTop: 19, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue },
   pressed: { opacity: 0.82 },
-  refreshGlyph: { color: palette.cyan, fontSize: 24 },
   refreshCopy: { flex: 1 },
-  refreshTitle: { color: palette.white, fontSize: 12, fontWeight: "700" },
-  refreshCaption: { marginTop: 3, color: "#A5B4C7", fontSize: 9 },
-  refreshArrow: { color: "#A5B4FC", fontSize: 17 },
+  refreshTitle: { color: palette.white, fontSize: 14, fontWeight: "700" },
+  refreshCaption: { marginTop: 3, color: "#DBEAFE", fontSize: 12 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 6 },
+  sourceValue: { marginTop: 8, color: palette.secondary, fontSize: 12, lineHeight: 17 },
 });

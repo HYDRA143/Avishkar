@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Link, Stack } from "expo-router";
+import { Stack } from "expo-router";
 import {
   apiConfig,
+  deviceCategoryColor,
   DeviceRow,
   fetchJson,
   formatBytes,
@@ -12,6 +13,7 @@ import {
   type DeviceInfo,
 } from "./index";
 import { getUnoUsageHistory, recordUnoUsage, type UnoUsageEntry } from "./deviceUsageHistory";
+import { AppHeader, AppIcon, COLORS, ErrorCard, LoadingSkeleton } from "./_components/design";
 
 type ReportItem = {
   id: number;
@@ -88,32 +90,22 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
     <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
       <View style={styles.content}>
         <Stack.Screen options={{ headerShown: false }} />
-        <View style={styles.header}>
-          <Link href="/" asChild><Pressable style={styles.back}><Text style={styles.backGlyph}>‹</Text></Pressable></Link>
-          <View style={styles.headerCopy}>
-            <Text style={styles.kicker}>NETGUARD · ACTIVITY</Text>
-            <Text style={styles.title}>Reports</Text>
-          </View>
-          <View style={styles.headerMark}><Text style={styles.headerMarkText}>N</Text></View>
-        </View>
+        <AppHeader back liveStatus={error ? "OFFLINE" : loading ? "SYNCING" : reports.length ? "LIVE" : "IDLE"} />
+        <View style={styles.titleRow}><AppIcon name="assessment" color={COLORS.gold} size={22} /><Text style={styles.title}>Reports</Text></View>
         <Text style={styles.subtitle}>Recent real snapshots from Uno wlan0. Other discovered devices are not individually measured.</Text>
 
-        {error ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Reports unavailable</Text>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        ) : null}
+        {error ? <ErrorCard title="Reports unavailable" message={error} onRetry={onRefresh} /> : null}
 
         {loading && reports.length === 0 ? (
           <View style={styles.stateCard}>
             <ActivityIndicator color={palette.cyan} />
             <Text style={styles.stateTitle}>Loading network snapshot</Text>
             <Text style={styles.stateText}>Reading discovered devices and Uno wlan0 counters.</Text>
+            <LoadingSkeleton lines={3} />
           </View>
         ) : reports.length === 0 && !error ? (
           <View style={styles.stateCard}>
-            <View style={styles.emptyIcon}><Text style={styles.emptyGlyph}>▤</Text></View>
+            <View style={styles.emptyIcon}><AppIcon name="assessment" size={23} color={COLORS.gold} /></View>
             <Text style={styles.stateTitle}>No local samples yet</Text>
             <Text style={styles.stateText}>A sample will appear when the gateway returns real device and bandwidth data.</Text>
             <Pressable onPress={onRefresh} style={({ pressed }) => [styles.inlineButton, pressed && styles.pressed]}>
@@ -131,8 +123,9 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
               const deviceHistory = isUno
                 ? usageHistory.filter((entry) => entry.intervalBytes !== null).slice(-20).reverse()
                 : [];
+              const identityColor = deviceCategoryColor(device.identity.category);
               return (
-                <View key={device.id} style={styles.reportCard}>
+                <View key={device.id} style={[styles.reportCard, { borderColor: identityColor.border }]}>
                   <DeviceRow device={device} />
                   <View style={styles.deviceUsage}>
                     {isUno ? (
@@ -176,12 +169,12 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
         </View>
 
         <Pressable onPress={onRefresh} style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}>
-          <Text style={styles.refreshGlyph}>↻</Text>
+          <AppIcon name="refresh" size={21} color={COLORS.white} />
           <View style={styles.refreshCopy}>
             <Text style={styles.refreshTitle}>Refresh network data</Text>
             <Text style={styles.refreshCaption}>Fetch the latest device and traffic telemetry</Text>
           </View>
-          <Text style={styles.refreshArrow}>→</Text>
+          <AppIcon name="arrow-forward" size={18} color={COLORS.white} />
         </Pressable>
       </View>
     </ScrollView>
@@ -193,54 +186,53 @@ export default function Reports() {
   return <ReportsView refreshKey={refreshKey} onRefresh={() => setRefreshKey((key) => key + 1)} />;
 }
 
-const palette = { background: "#080B14", white: "#FFFFFF", muted: "#64748B", secondary: "#94A3B8", indigo: "#6366F1", cyan: "#22D3EE" };
+const palette = { background: COLORS.background, white: COLORS.white, muted: COLORS.secondary, secondary: COLORS.secondary, indigo: COLORS.blue, cyan: COLORS.gold };
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.background },
-  page: { alignItems: "center", padding: 16, paddingTop: 22, paddingBottom: 36 },
+  page: { alignItems: "center", padding: 16, paddingTop: 16, paddingBottom: 36 },
   content: { width: "100%", maxWidth: 820 },
   header: { flexDirection: "row", alignItems: "center", gap: 12 },
   back: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
   backGlyph: { color: palette.white, fontSize: 28, lineHeight: 31 },
   headerCopy: { flex: 1 },
   kicker: { color: "#A5B4FC", fontSize: 8, fontWeight: "800", letterSpacing: 1.5 },
-  title: { marginTop: 3, color: palette.white, fontSize: 23, fontWeight: "800" },
+  title: { marginTop: 0, color: palette.white, fontSize: 23, fontWeight: "800" },
   headerMark: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(99,102,241,0.2)", borderWidth: 1, borderColor: "rgba(129,140,248,0.3)" },
   headerMarkText: { color: palette.cyan, fontWeight: "800", fontSize: 17 },
-  subtitle: { marginTop: 14, marginBottom: 18, color: palette.secondary, fontSize: 11 },
+  subtitle: { marginTop: 14, marginBottom: 18, color: palette.secondary, fontSize: 12 },
   errorCard: { padding: 13, marginBottom: 14, borderRadius: 14, backgroundColor: "rgba(239,68,68,0.08)", borderWidth: 1, borderColor: "rgba(239,68,68,0.2)" },
-  errorTitle: { color: "#FCA5A5", fontSize: 12, fontWeight: "700" },
-  errorText: { marginTop: 4, color: palette.secondary, fontSize: 10, lineHeight: 15 },
-  stateCard: { minHeight: 220, alignItems: "center", justifyContent: "center", padding: 22, borderRadius: 19, backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
-  emptyIcon: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 15, backgroundColor: "rgba(99,102,241,0.16)" },
+  errorTitle: { color: COLORS.red, fontSize: 14, fontWeight: "700" },
+  errorText: { marginTop: 4, color: palette.secondary, fontSize: 12, lineHeight: 18 },
+  stateCard: { minHeight: 220, alignItems: "center", justifyContent: "center", padding: 22, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
+  emptyIcon: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 15, backgroundColor: "rgba(26,86,219,0.16)" },
   emptyGlyph: { color: "#A5B4FC", fontSize: 22 },
   stateTitle: { marginTop: 12, color: "#E2E8F0", fontSize: 13, fontWeight: "700", textAlign: "center" },
-  stateText: { maxWidth: 280, marginTop: 5, color: palette.muted, fontSize: 10, lineHeight: 15, textAlign: "center" },
-  inlineButton: { paddingHorizontal: 15, paddingVertical: 10, marginTop: 16, borderRadius: 11, backgroundColor: "rgba(99,102,241,0.2)", borderWidth: 1, borderColor: "rgba(129,140,248,0.3)" },
-  inlineButtonText: { color: "#C7D2FE", fontSize: 10, fontWeight: "700" },
-  reportCard: { padding: 16, marginBottom: 12, borderRadius: 19, backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
+  stateText: { maxWidth: 280, marginTop: 5, color: palette.muted, fontSize: 12, lineHeight: 18, textAlign: "center" },
+  inlineButton: { paddingHorizontal: 16, paddingVertical: 12, marginTop: 16, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue },
+  inlineButtonText: { color: COLORS.white, fontSize: 13, fontWeight: "700" },
+  reportCard: { padding: 16, marginBottom: 12, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1 },
   deviceUsage: { paddingTop: 10, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.08)" },
-  historyTitle: { marginTop: 11, marginBottom: 5, color: palette.secondary, fontSize: 9, fontWeight: "700" },
+  historyTitle: { marginTop: 11, marginBottom: 5, color: palette.secondary, fontSize: 12, fontWeight: "700" },
   historyRow: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.06)" },
-  historyTime: { color: palette.muted, fontSize: 8 },
-  historyBytes: { marginTop: 3, color: "#CBD5E1", fontSize: 9 },
-  noDeviceUsage: { paddingVertical: 11, color: palette.muted, fontSize: 10 },
-  combinedTotal: { padding: 14, marginBottom: 12, borderRadius: 14, backgroundColor: "rgba(34,211,238,0.07)", borderWidth: 1, borderColor: "rgba(34,211,238,0.2)" },
-  combinedTotalText: { color: "#A5F3FC", fontSize: 11, fontWeight: "700" },
+  historyTime: { color: palette.muted, fontSize: 12 },
+  historyBytes: { marginTop: 3, color: "#CBD5E1", fontSize: 12 },
+  noDeviceUsage: { paddingVertical: 11, color: palette.muted, fontSize: 13 },
+  combinedTotal: { padding: 16, marginBottom: 12, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.blue },
+  combinedTotalText: { color: "#DBEAFE", fontSize: 13, fontWeight: "700" },
   reportTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 9, paddingBottom: 15 },
-  reportKicker: { color: "#A5B4FC", fontSize: 8, fontWeight: "800", letterSpacing: 1.2 },
-  reportTime: { marginTop: 6, color: palette.secondary, fontSize: 10 },
+  reportKicker: { color: COLORS.gold, fontSize: 12, fontWeight: "800", letterSpacing: 1.1 },
+  reportTime: { marginTop: 6, color: palette.secondary, fontSize: 12 },
   guardBadge: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 99, backgroundColor: "rgba(99,102,241,0.14)" },
-  guardText: { color: "#C7D2FE", fontSize: 8, fontWeight: "800" },
+  guardText: { color: "#DBEAFE", fontSize: 12, fontWeight: "800" },
   metrics: { flexDirection: "row", alignItems: "center", paddingTop: 14, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.08)" },
   metric: { flex: 1, gap: 5 },
-  metricValue: { color: palette.white, fontSize: 15, fontWeight: "800" },
-  metricLabel: { color: palette.muted, fontSize: 8, fontWeight: "700", letterSpacing: 0.8 },
+  metricValue: { color: palette.white, fontSize: 16, fontWeight: "800" },
+  metricLabel: { color: palette.muted, fontSize: 12, fontWeight: "700", letterSpacing: 0.8 },
   metricDivider: { width: 1, height: 25, marginHorizontal: 8, backgroundColor: "rgba(255,255,255,0.1)" },
-  refreshButton: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, marginTop: 18, borderRadius: 17, backgroundColor: "#252A66", borderWidth: 1, borderColor: "rgba(129,140,248,0.34)" },
+  refreshButton: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, marginTop: 18, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue },
   pressed: { opacity: 0.82 },
-  refreshGlyph: { color: palette.cyan, fontSize: 24 },
   refreshCopy: { flex: 1 },
-  refreshTitle: { color: palette.white, fontSize: 12, fontWeight: "700" },
-  refreshCaption: { marginTop: 3, color: "#A5B4C7", fontSize: 9 },
-  refreshArrow: { color: "#A5B4FC", fontSize: 17 },
+  refreshTitle: { color: palette.white, fontSize: 14, fontWeight: "700" },
+  refreshCaption: { marginTop: 3, color: "#DBEAFE", fontSize: 12 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 6 },
 });

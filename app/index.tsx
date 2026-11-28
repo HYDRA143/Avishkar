@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { Link, Stack } from "expo-router";
 import { recordUnoUsage } from "./deviceUsageHistory";
+import { AppHeader, AppIcon, COLORS, ErrorCard, LoadingSkeleton, NetworkLineGraph, type MaterialIconName } from "./_components/design";
 
 export type DeviceInfo = {
   id: string;
@@ -233,6 +234,13 @@ export const parseBandwidth = (payload: unknown): BandwidthInfo => {
 
 export function DeviceRow({ device, divider = false }: { device: DeviceInfo; divider?: boolean }) {
   const color = deviceCategoryColor(device.identity.category);
+  const icon: MaterialIconName = device.identity.category === "uno"
+    ? "security"
+    : device.identity.category === "gateway"
+      ? "router"
+      : device.identity.category === "phone"
+        ? "smartphone"
+        : "device-unknown";
   const row = (
     <Pressable
       style={({ pressed }) => [
@@ -246,21 +254,24 @@ export function DeviceRow({ device, divider = false }: { device: DeviceInfo; div
       disabled={!device.ipAddress}
     >
       <View style={[styles.deviceAvatar, { backgroundColor: color.background, borderColor: color.border }]}>
-        <Text style={[styles.deviceAvatarText, { color: color.text }]}>{device.identity.iconLetter}</Text>
+        <AppIcon name={icon} size={22} color={color.text} />
       </View>
       <View style={styles.deviceCopy}>
         <View style={styles.deviceTitleRow}>
           <Text style={styles.deviceName}>{device.identity.name}</Text>
-          <Text style={[styles.deviceStatus, device.reachable === true && styles.deviceOnline, device.reachable === false && styles.deviceOffline]}>
-            {device.reachable === null ? "Status unavailable" : device.reachable ? "Online" : "Offline"}
-          </Text>
+          <View style={styles.deviceStatusWrap}>
+            {device.reachable === null ? null : <AppIcon name={device.reachable ? "check-circle" : "error"} size={15} color={device.reachable ? COLORS.green : COLORS.red} />}
+            <Text style={[styles.deviceStatus, device.reachable === true && styles.deviceOnline, device.reachable === false && styles.deviceOffline]}>
+              {device.reachable === null ? "Status unavailable" : device.reachable ? "Online" : "Offline"}
+            </Text>
+          </View>
         </View>
         <Text style={styles.deviceAddress}>{device.ipAddress || "IP not reported"}</Text>
         <Text style={styles.deviceMac}>{device.macAddress || "MAC not reported"}</Text>
         <Text style={[styles.deviceType, { color: color.text }]}>{device.identity.type}</Text>
         <Text style={styles.deviceSource}>{device.identity.source}</Text>
       </View>
-      {device.ipAddress ? <Text style={styles.deviceArrow}>›</Text> : null}
+      {device.ipAddress ? <AppIcon name="arrow-forward" size={18} color={COLORS.secondary} /> : null}
     </Pressable>
   );
   if (!device.ipAddress) return row;
@@ -396,12 +407,12 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
   const totalBytes = data.bandwidth
     ? data.bandwidth.receivedBytes + data.bandwidth.sentBytes
     : null;
-  const actions = [
-    { href: "/graph" as const, glyph: "⌁", title: "Usage graph", subtitle: "Explore live traffic" },
-    { href: "/reports" as const, glyph: "▤", title: "Reports", subtitle: "Review network snapshots" },
-    { href: "/status" as const, glyph: "◎", title: "System status", subtitle: "Inspect monitor health" },
-    { href: "/alerts" as const, glyph: "◉", title: "Usage alerts", subtitle: "Set hourly, daily, and weekly caps" },
-    { href: "/settings" as const, glyph: "⚙", title: "Settings", subtitle: "Manage local preferences" },
+  const actions: ReadonlyArray<{ href: "/graph" | "/reports" | "/status" | "/alerts" | "/settings"; icon: MaterialIconName; title: string; subtitle: string }> = [
+    { href: "/graph", icon: "show-chart", title: "Usage graph", subtitle: "Explore live traffic" },
+    { href: "/reports", icon: "assessment", title: "Reports", subtitle: "Review network snapshots" },
+    { href: "/status", icon: "devices", title: "System status", subtitle: "Inspect monitor health" },
+    { href: "/alerts", icon: "notifications-active", title: "Usage alerts", subtitle: "Set hourly, daily, and weekly caps" },
+    { href: "/settings", icon: "settings", title: "Settings", subtitle: "Manage local preferences" },
   ];
   const { base } = apiConfig();
   const gateway = data.devices.find((device) => device.identity.category === "gateway");
@@ -412,89 +423,49 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
       <View style={styles.content}>
-        <View style={styles.header}>
-          <View style={styles.brand}>
-            <View style={styles.brandMark}><Text style={styles.brandMarkText}>N</Text></View>
-            <View>
-              <View style={styles.brandTitleRow}>
-                <Text style={styles.brandTitle}>NetGuard</Text>
-                <Text style={styles.proBadge}>MONITORING</Text>
-              </View>
-              <Text style={styles.brandCaption}>NETWORK INTELLIGENCE</Text>
-            </View>
-          </View>
-          <View style={[
-            styles.statusPill,
-            data.monitorReady === true && styles.statusOnline,
-            data.monitorReady === false && styles.statusOffline,
-          ]}>
-            {data.loading
-              ? <ActivityIndicator size="small" color={palette.cyan} />
-              : <View style={[
-                styles.statusDot,
-                data.monitorReady === true && styles.statusDotOnline,
-                data.monitorReady === false && styles.statusDotOffline,
-              ]} />}
-            <Text style={styles.statusText}>
-              {data.loading ? "SYNCING" : data.monitorReady === true ? "READY" : data.monitorReady === false ? "NOT READY" : "UNAVAILABLE"}
-            </Text>
-          </View>
-        </View>
-
+        <AppHeader liveStatus={data.error ? "OFFLINE" : data.loading ? "SYNCING" : data.bandwidth ? "LIVE" : "IDLE"} />
         <Text style={styles.intro}>Your network, monitored and in view.</Text>
 
-        {data.error ? (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorMark}>!</Text>
-            <View style={styles.errorCopy}>
-              <Text style={styles.errorTitle}>Live data unavailable</Text>
-              <Text style={styles.errorMessage}>{data.error}</Text>
-            </View>
-          </View>
-        ) : null}
+        {data.error ? <ErrorCard title="Live data unavailable" message={data.error} onRetry={onRefresh} /> : null}
 
         <View style={styles.hero}>
-          <View style={styles.heroGlow} />
-          <Text style={styles.eyebrow}>MONITOR STATUS</Text>
-          <View style={styles.heroMain}>
-            <View>
-              <Text style={styles.heroStatus}>
-                {data.loading ? "Checking" : data.monitorReady === true ? "Ready" : data.monitorReady === false ? "Not ready" : "Unavailable"}
-              </Text>
-              <Text style={styles.heroDetail}>
-                {data.loading ? "Checking monitor status…" : data.monitorReady === null ? "Guard readiness is unavailable" : "Guard readiness from the status API"}
+          <View style={styles.usageHeading}>
+            <AppIcon name="data-usage" size={22} color={COLORS.blue} />
+            <Text style={styles.usageTitle}>Total Usage</Text>
+            <View style={styles.liveTag}>
+              <View style={[styles.liveDot, data.speed && data.speed.down + data.speed.up > 0 ? styles.liveDotActive : styles.liveDotIdle]} />
+              <Text style={[styles.liveText, data.speed && data.speed.down + data.speed.up > 0 ? styles.liveTextActive : styles.liveTextIdle]}>
+                {data.speed ? data.speed.down + data.speed.up > 0 ? "LIVE" : "IDLE" : "WAITING"}
               </Text>
             </View>
-            <View style={styles.gatewayOrb}>
-              <View style={[
-                styles.gatewayOrbCore,
-                data.monitorReady === true && styles.gatewayOrbOnline,
-              ]}>
-                <Text style={styles.gatewayGlyph}>⌁</Text>
-              </View>
-            </View>
           </View>
-          <View style={styles.statRow}>
-            <View style={styles.stat}>
-              <Text style={styles.statValue}>{data.devices.length}</Text>
-              <Text style={styles.statLabel}>DISCOVERED</Text>
+          <Text style={styles.usageValueLarge}>{totalBytes === null ? data.loading ? "Loading…" : "No data" : formatBytes(totalBytes)}</Text>
+          <Text style={styles.heroDetail}>Uno wlan0 cumulative total · not per-device</Text>
+          <View style={styles.heroRule} />
+          <View style={styles.liveSpeedRow}>
+            <View style={styles.liveSpeedLabelRow}>
+              <AppIcon name="speed" size={18} color={COLORS.gold} />
+              <Text style={styles.liveSpeedLabel}>Live speed</Text>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.stat}>
-              <Text style={styles.statValue}>{totalBytes === null ? "No data" : formatBytes(totalBytes)}</Text>
-              <Text style={styles.statLabel}>UNO WLAN TOTAL</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.stat}>
-              <Text style={styles.statValue}>{data.bandwidth?.interfaceName ?? "No data"}</Text>
-              <Text style={styles.statLabel}>INTERFACE</Text>
-            </View>
+            <Text style={styles.speedValue}>
+              {data.speed === null
+                ? data.bandwidth ? "Measuring…" : "No data"
+                : data.speed.down === 0 && data.speed.up === 0
+                  ? "Idle"
+                  : formatSpeed(data.speed.down + data.speed.up)}
+            </Text>
           </View>
+          <Text style={styles.guardStatus}>
+            Guard status: {data.loading ? "Checking…" : data.monitorReady === null ? "Unavailable" : data.monitorReady ? "Ready" : "Not ready"}
+          </Text>
         </View>
 
         <View style={styles.sectionHeading}>
           <View>
-            <Text style={styles.sectionTitle}>Devices</Text>
+            <View style={styles.sectionTitleRow}>
+              <AppIcon name="devices" size={19} color={COLORS.gold} />
+              <Text style={styles.sectionTitle}>Devices</Text>
+            </View>
             <Text style={styles.sectionCaption}>
               {data.devices.length} discovered · per-device usage unavailable
             </Text>
@@ -509,15 +480,32 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
             <DeviceRow key={device.id} device={device} divider={index > 0} />
           )) : (
             <View style={styles.emptyState}>
-              <View style={styles.emptyIcon}><Text style={styles.emptyGlyph}>⌁</Text></View>
+              <View style={styles.emptyIcon}><AppIcon name="devices" size={23} color={COLORS.gold} /></View>
               <Text style={styles.emptyTitle}>{data.loading ? "Scanning device inventory" : "No devices reporting"}</Text>
               <Text style={styles.emptyBody}>
                 {data.loading
                   ? "Your live device list will appear here."
                   : "When the gateway reports devices, they’ll appear here."}
               </Text>
-              {data.loading ? <ActivityIndicator color={palette.cyan} style={styles.emptyLoader} /> : null}
+              {data.loading ? <LoadingSkeleton lines={2} /> : null}
             </View>
+          )}
+        </View>
+        <View style={styles.sectionHeading}>
+          <View>
+            <Text style={styles.sectionTitle}>Live Network</Text>
+            <Text style={styles.sectionCaption}>Last 7 samples · ~30s · speed in KB/s · Uno wlan0</Text>
+          </View>
+          <AppIcon name="show-chart" size={21} color={COLORS.gold} />
+        </View>
+        <View style={styles.card}>
+          {data.speedHistory.length > 0 ? (
+            <NetworkLineGraph
+              values={data.speedHistory.map((point) => point.down + point.up)}
+              labels={data.speedHistory.map((point) => new Date(point.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}
+            />
+          ) : (
+            <Text style={styles.chartUnavailable}>No measured speed intervals yet.</Text>
           )}
         </View>
         <View style={styles.scopeNotice}>
@@ -593,8 +581,8 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
             <Link key={action.href} href={action.href} asChild>
               <Pressable style={({ pressed }) => [styles.action, pressed && styles.actionPressed]}>
                 <View style={styles.actionTop}>
-                  <View style={styles.actionIcon}><Text style={styles.actionGlyph}>{action.glyph}</Text></View>
-                  <Text style={styles.actionArrow}>↗</Text>
+                  <View style={styles.actionIcon}><AppIcon name={action.icon} size={20} color={COLORS.gold} /></View>
+                  <AppIcon name="arrow-forward" size={17} color={COLORS.secondary} />
                 </View>
                 <Text style={styles.actionTitle}>{action.title}</Text>
                 <Text style={styles.actionCaption}>{action.subtitle}</Text>
@@ -609,12 +597,12 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
           accessibilityRole="button"
           accessibilityLabel="Refresh network data"
         >
-          <Text style={styles.refreshGlyph}>↻</Text>
+          <AppIcon name="refresh" size={22} color={COLORS.white} />
           <View style={styles.refreshCopy}>
             <Text style={styles.refreshTitle}>Refresh network data</Text>
             <Text style={styles.refreshCaption}>Fetch the latest device and traffic telemetry</Text>
           </View>
-          <Text style={styles.refreshArrow}>→</Text>
+          <AppIcon name="arrow-forward" size={18} color={COLORS.white} />
         </Pressable>
         <Text style={styles.footer}>NETGUARD · PRIVATE BY DESIGN</Text>
       </View>
@@ -633,36 +621,36 @@ export default function Home() {
 }
 
 const palette = {
-  background: "#080B14",
-  surface: "rgba(255,255,255,0.055)",
-  border: "rgba(255,255,255,0.09)",
-  white: "#FFFFFF",
-  secondary: "#94A3B8",
-  muted: "#64748B",
-  indigo: "#6366F1",
-  cyan: "#22D3EE",
-  green: "#10B981",
-  red: "#EF4444",
+  background: COLORS.background,
+  surface: COLORS.card,
+  border: COLORS.border,
+  white: COLORS.white,
+  secondary: COLORS.secondary,
+  muted: COLORS.secondary,
+  indigo: COLORS.blue,
+  cyan: COLORS.gold,
+  green: COLORS.green,
+  red: COLORS.red,
 };
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.background },
-  page: { alignItems: "center", paddingHorizontal: 16, paddingTop: 22, paddingBottom: 38 },
+  page: { alignItems: "center", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 38 },
   content: { width: "100%", maxWidth: 820 },
   header: { minHeight: 50, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   brand: { flexDirection: "row", alignItems: "center", gap: 10 },
   brandMark: {
     width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center",
-    backgroundColor: "rgba(99,102,241,0.2)", borderWidth: 1, borderColor: "rgba(129,140,248,0.4)",
+    backgroundColor: "rgba(26,86,219,0.2)", borderWidth: 1, borderColor: "rgba(26,86,219,0.4)",
   },
   brandMarkText: { color: palette.cyan, fontSize: 20, fontWeight: "800" },
   brandTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   brandTitle: { color: palette.white, fontSize: 17, fontWeight: "700" },
   proBadge: {
     overflow: "hidden", paddingHorizontal: 6, paddingVertical: 3, borderRadius: 5,
-    color: "#A5B4FC", backgroundColor: "rgba(99,102,241,0.18)", fontSize: 8, fontWeight: "800", letterSpacing: 0.8,
+    color: "#BFDBFE", backgroundColor: "rgba(26,86,219,0.18)", fontSize: 12, fontWeight: "800", letterSpacing: 0.8,
   },
-  brandCaption: { marginTop: 4, color: palette.muted, fontSize: 8, fontWeight: "700", letterSpacing: 1.4 },
+  brandCaption: { marginTop: 4, color: palette.muted, fontSize: 12, fontWeight: "700", letterSpacing: 1.4 },
   statusPill: {
     minHeight: 32, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10,
     borderRadius: 99, backgroundColor: "rgba(255,255,255,0.05)", borderWidth: 1, borderColor: palette.border,
@@ -672,7 +660,7 @@ const styles = StyleSheet.create({
   statusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#F59E0B" },
   statusDotOnline: { backgroundColor: palette.green },
   statusDotOffline: { backgroundColor: palette.red },
-  statusText: { color: palette.secondary, fontSize: 9, fontWeight: "800", letterSpacing: 0.7 },
+  statusText: { color: palette.secondary, fontSize: 12, fontWeight: "800", letterSpacing: 0.7 },
   intro: { marginTop: 18, marginBottom: 18, color: palette.secondary, fontSize: 12 },
   errorBanner: {
     flexDirection: "row", alignItems: "center", gap: 10, padding: 13, marginBottom: 16,
@@ -681,102 +669,111 @@ const styles = StyleSheet.create({
   errorMark: { color: "#FCA5A5", fontSize: 19, fontWeight: "800" },
   errorCopy: { flex: 1 },
   errorTitle: { color: "#FCA5A5", fontSize: 12, fontWeight: "700" },
-  errorMessage: { marginTop: 3, color: palette.secondary, fontSize: 10, lineHeight: 15 },
+  errorMessage: { marginTop: 3, color: palette.secondary, fontSize: 12, lineHeight: 18 },
   scopeNotice: {
     padding: 13, marginTop: 10, borderRadius: 14, backgroundColor: "rgba(245,158,11,0.07)",
     borderWidth: 1, borderColor: "rgba(245,158,11,0.18)",
   },
-  scopeNoticeTitle: { color: "#FCD34D", fontSize: 11, fontWeight: "700" },
-  scopeNoticeBody: { marginTop: 5, color: palette.secondary, fontSize: 10, lineHeight: 15 },
+  scopeNoticeTitle: { color: COLORS.orange, fontSize: 14, fontWeight: "700" },
+  scopeNoticeBody: { marginTop: 5, color: palette.secondary, fontSize: 12, lineHeight: 18 },
   hero: {
-    overflow: "hidden", padding: 20, borderRadius: 22, backgroundColor: "#11162B",
-    borderWidth: 1, borderColor: "rgba(129,140,248,0.28)", shadowColor: "#312E81",
+    overflow: "hidden", padding: 20, borderRadius: 16, backgroundColor: COLORS.darkBlue,
+    borderWidth: 1, borderColor: "rgba(26,86,219,0.42)", shadowColor: COLORS.blue,
     shadowOpacity: 0.28, shadowRadius: 22, shadowOffset: { width: 0, height: 10 }, elevation: 7,
   },
   heroGlow: {
     position: "absolute", top: -105, right: -40, width: 220, height: 220, borderRadius: 110,
-    backgroundColor: "rgba(34,211,238,0.075)",
+    backgroundColor: "rgba(26,86,219,0.12)",
   },
-  eyebrow: { color: "#A5B4FC", fontSize: 9, fontWeight: "800", letterSpacing: 1.7 },
+  usageHeading: { flexDirection: "row", alignItems: "center", gap: 9 },
+  usageTitle: { flex: 1, color: palette.white, fontSize: 17, fontWeight: "700" },
+  usageValueLarge: { marginTop: 16, color: palette.white, fontSize: 34, fontWeight: "800" },
+  heroRule: { height: 1, marginTop: 18, backgroundColor: "rgba(148,163,184,0.2)" },
+  liveSpeedRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 14 },
+  liveSpeedLabelRow: { flexDirection: "row", alignItems: "center", gap: 7 },
+  liveSpeedLabel: { color: palette.secondary, fontSize: 13, fontWeight: "600" },
+  guardStatus: { marginTop: 12, color: palette.secondary, fontSize: 12 },
+  liveDotActive: { backgroundColor: COLORS.gold },
+  liveDotIdle: { backgroundColor: COLORS.orange },
+  liveTextActive: { color: COLORS.gold },
+  liveTextIdle: { color: COLORS.orange },
+  eyebrow: { color: COLORS.secondary, fontSize: 12, fontWeight: "800", letterSpacing: 1.2 },
   heroMain: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 15, paddingVertical: 19 },
   heroStatus: { color: palette.white, fontSize: 31, fontWeight: "800", letterSpacing: -0.8 },
-  heroDetail: { marginTop: 6, color: "#A5B4C7", fontSize: 11 },
+  heroDetail: { marginTop: 6, color: palette.secondary, fontSize: 12 },
   gatewayOrb: {
     width: 78, height: 78, borderRadius: 39, alignItems: "center", justifyContent: "center",
-    backgroundColor: "rgba(99,102,241,0.1)", borderWidth: 1, borderColor: "rgba(34,211,238,0.26)",
+    backgroundColor: "rgba(26,86,219,0.1)", borderWidth: 1, borderColor: "rgba(26,86,219,0.4)",
   },
   gatewayOrbCore: {
     width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center",
-    backgroundColor: "rgba(99,102,241,0.25)", borderWidth: 1, borderColor: "rgba(165,180,252,0.4)",
+    backgroundColor: "rgba(26,86,219,0.25)", borderWidth: 1, borderColor: "rgba(26,86,219,0.5)",
   },
   gatewayOrbOnline: { backgroundColor: "rgba(16,185,129,0.2)", borderColor: "rgba(52,211,153,0.5)" },
   gatewayGlyph: { color: palette.cyan, fontSize: 27, fontWeight: "700" },
   statRow: { minHeight: 61, flexDirection: "row", alignItems: "center", paddingTop: 12, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.1)" },
   stat: { flex: 1, gap: 5 },
   statValue: { color: palette.white, fontSize: 16, fontWeight: "800" },
-  statLabel: { color: "#8592AB", fontSize: 8, fontWeight: "700", letterSpacing: 0.75 },
+  statLabel: { color: palette.secondary, fontSize: 11, fontWeight: "700", letterSpacing: 0.75 },
   statDivider: { width: 1, height: 28, marginHorizontal: 10, backgroundColor: "rgba(255,255,255,0.12)" },
   sectionHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 24, marginBottom: 11 },
   sectionTitle: { color: palette.white, fontSize: 16, fontWeight: "700" },
-  sectionCaption: { marginTop: 4, color: palette.muted, fontSize: 10 },
-  liveTag: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 99, backgroundColor: "rgba(16,185,129,0.09)" },
-  liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: palette.green },
-  liveText: { color: "#6EE7B7", fontSize: 8, fontWeight: "800", letterSpacing: 0.7 },
-  card: { paddingHorizontal: 14, borderRadius: 18, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, shadowColor: "#000", shadowOpacity: 0.14, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 3 },
+  sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
+  sectionCaption: { marginTop: 4, color: palette.muted, fontSize: 12 },
+  liveTag: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 99, backgroundColor: "rgba(245,179,1,0.1)" },
+  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: COLORS.gold },
+  liveText: { color: COLORS.gold, fontSize: 12, fontWeight: "800", letterSpacing: 0.7 },
+  card: { padding: 16, borderRadius: 16, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, shadowColor: "#000", shadowOpacity: 0.14, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 3 },
   deviceRow: { minHeight: 90, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 10, paddingVertical: 12, marginVertical: 4, borderRadius: 14, borderWidth: 1 },
   deviceRowPressed: { opacity: 0.78 },
   rowDivider: { borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.07)" },
   deviceAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", borderWidth: 1 },
-  deviceAvatarText: { color: "#C7D2FE", fontSize: 17, fontWeight: "700" },
   deviceCopy: { flex: 1, minWidth: 0 },
   deviceTitleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 7 },
-  deviceName: { color: "#F1F5F9", fontSize: 12, fontWeight: "700" },
-  deviceAddress: { marginTop: 4, color: palette.secondary, fontSize: 10 },
-  deviceMac: { marginTop: 3, color: palette.muted, fontSize: 9 },
-  deviceType: { marginTop: 4, fontSize: 9, fontWeight: "700" },
-  deviceSource: { marginTop: 3, color: palette.muted, fontSize: 8 },
-  deviceStatus: { color: palette.muted, fontSize: 8, fontWeight: "700" },
+  deviceName: { color: "#F1F5F9", fontSize: 14, fontWeight: "700" },
+  deviceAddress: { marginTop: 4, color: palette.secondary, fontSize: 12 },
+  deviceMac: { marginTop: 3, color: palette.muted, fontSize: 12 },
+  deviceType: { marginTop: 4, fontSize: 12, fontWeight: "700" },
+  deviceSource: { marginTop: 3, color: palette.muted, fontSize: 12 },
+  deviceStatusWrap: { flexDirection: "row", alignItems: "center", gap: 4 },
+  deviceStatus: { color: palette.muted, fontSize: 12, fontWeight: "700" },
   deviceOnline: { color: "#6EE7B7" },
   deviceOffline: { color: "#FCA5A5" },
-  deviceArrow: { color: palette.secondary, fontSize: 22 },
-  sourceBadge: { padding: 11, marginBottom: 10, borderRadius: 12, backgroundColor: "rgba(99,102,241,0.1)", borderWidth: 1, borderColor: "rgba(129,140,248,0.22)" },
-  sourceBadgeText: { color: "#C7D2FE", fontSize: 9, lineHeight: 14 },
+  sourceBadge: { padding: 12, marginBottom: 10, borderRadius: 12, backgroundColor: COLORS.darkBlue, borderWidth: 1, borderColor: "rgba(26,86,219,0.4)" },
+  sourceBadgeText: { color: "#DBEAFE", fontSize: 12, lineHeight: 18 },
   emptyState: { minHeight: 158, alignItems: "center", justifyContent: "center", paddingVertical: 20 },
   emptyIcon: { width: 40, height: 40, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(99,102,241,0.15)" },
   emptyGlyph: { color: "#A5B4FC", fontSize: 23 },
   emptyTitle: { marginTop: 11, color: "#E2E8F0", fontSize: 12, fontWeight: "700" },
-  emptyBody: { maxWidth: 260, marginTop: 5, color: palette.muted, fontSize: 10, lineHeight: 15, textAlign: "center" },
+  emptyBody: { maxWidth: 260, marginTop: 5, color: palette.muted, fontSize: 12, lineHeight: 18, textAlign: "center" },
   emptyLoader: { marginTop: 11 },
   bandwidthTotals: { gap: 14, paddingTop: 16 },
   usageTotalBlock: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  usageLabel: { color: palette.muted, fontSize: 8, fontWeight: "800", letterSpacing: 1 },
+  usageLabel: { color: palette.muted, fontSize: 12, fontWeight: "800", letterSpacing: 1 },
   usageValue: { color: palette.white, fontSize: 17, fontWeight: "800", letterSpacing: -0.3 },
   speedBlock: { gap: 6, paddingTop: 12, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.07)" },
-  speedValue: { color: "#C7D2FE", fontSize: 12, fontWeight: "700" },
+  speedValue: { color: "#C7D2FE", fontSize: 14, fontWeight: "700" },
   bandwidthList: { gap: 14, paddingTop: 16, paddingBottom: 15 },
   interfaceRow: { gap: 6 },
   interfaceLine: { flexDirection: "row", justifyContent: "space-between" },
   interfaceTotals: { flexDirection: "row", justifyContent: "space-between", marginTop: 3 },
-  interfaceName: { color: palette.secondary, fontSize: 10, fontWeight: "600" },
-  interfaceBytes: { color: palette.muted, fontSize: 9 },
+  interfaceName: { color: palette.secondary, fontSize: 12, fontWeight: "600" },
+  interfaceBytes: { color: palette.muted, fontSize: 12 },
   progressTrack: { height: 5, overflow: "hidden", borderRadius: 4, backgroundColor: "rgba(148,163,184,0.12)" },
   progressFill: { height: "100%", borderRadius: 4, backgroundColor: palette.indigo },
   chartEmpty: { minHeight: 116, alignItems: "center", justifyContent: "center", gap: 12 },
   actionsGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 10 },
-  action: { width: "48.5%", minHeight: 122, padding: 13, borderRadius: 17, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border },
-  actionPressed: { backgroundColor: "rgba(255,255,255,0.09)", borderColor: "rgba(129,140,248,0.4)" },
+  action: { width: "48.5%", minHeight: 122, padding: 16, borderRadius: 16, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border },
+  actionPressed: { backgroundColor: "#17264A", borderColor: "rgba(26,86,219,0.5)" },
   actionTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
-  actionIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(99,102,241,0.19)", borderWidth: 1, borderColor: "rgba(129,140,248,0.22)" },
-  actionGlyph: { color: "#A5B4FC", fontSize: 18 },
-  actionArrow: { color: palette.muted, fontSize: 15 },
-  actionTitle: { color: "#F1F5F9", fontSize: 12, fontWeight: "700" },
-  actionCaption: { marginTop: 5, color: palette.muted, fontSize: 9, lineHeight: 13 },
-  refreshButton: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 15, marginTop: 22, borderRadius: 17, backgroundColor: "#252A66", borderWidth: 1, borderColor: "rgba(129,140,248,0.38)", shadowColor: palette.indigo, shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 5 },
+  actionIcon: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(26,86,219,0.19)", borderWidth: 1, borderColor: "rgba(26,86,219,0.28)" },
+  actionTitle: { color: "#F1F5F9", fontSize: 14, fontWeight: "700" },
+  actionCaption: { marginTop: 5, color: palette.muted, fontSize: 12, lineHeight: 16 },
+  refreshButton: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, marginTop: 22, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue, shadowColor: palette.indigo, shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 5 },
   refreshPressed: { opacity: 0.82 },
-  refreshGlyph: { color: palette.cyan, fontSize: 24, fontWeight: "600" },
   refreshCopy: { flex: 1 },
-  refreshTitle: { color: palette.white, fontSize: 12, fontWeight: "700" },
-  refreshCaption: { marginTop: 3, color: "#A5B4C7", fontSize: 9 },
-  refreshArrow: { color: "#A5B4FC", fontSize: 17, fontWeight: "600" },
-  footer: { marginTop: 23, color: "#475569", fontSize: 8, fontWeight: "700", letterSpacing: 1.6, textAlign: "center" },
+  refreshTitle: { color: palette.white, fontSize: 14, fontWeight: "700" },
+  refreshCaption: { marginTop: 3, color: "#DBEAFE", fontSize: 12 },
+  footer: { marginTop: 23, color: palette.secondary, fontSize: 12, fontWeight: "700", letterSpacing: 1.2, textAlign: "center" },
+  chartUnavailable: { minHeight: 160, padding: 16, color: palette.secondary, fontSize: 13, textAlign: "center", textAlignVertical: "center" },
 });

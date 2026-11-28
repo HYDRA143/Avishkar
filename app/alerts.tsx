@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Link, Stack } from "expo-router";
+import { Stack } from "expo-router";
 import {
   DEFAULT_USAGE_ALERT_SETTINGS,
   getUsageMonitorState,
@@ -22,6 +22,7 @@ import {
   formatUsageBytes,
   type UsageAlertSettings,
 } from "../src/features/wifi-monitor/usageMetrics";
+import { AppHeader, AppIcon, COLORS, ErrorCard } from "./_components/design";
 
 const BYTES_PER_GB = 1_000_000_000;
 
@@ -134,6 +135,12 @@ function UsageAlertsView() {
     }
   };
 
+  const retryMonitor = (): void => {
+    void refreshMonitor().catch((caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : "Unable to refresh usage data");
+    });
+  };
+
   const totalsReady = (monitor?.sampleCount ?? 0) >= 2;
   const lastSample = monitor?.lastSampleAt
     ? new Date(monitor.lastSampleAt).toLocaleString()
@@ -143,14 +150,8 @@ function UsageAlertsView() {
     <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
       <View style={styles.content}>
         <Stack.Screen options={{ headerShown: false }} />
-        <View style={styles.header}>
-          <Link href="/" asChild><Pressable style={styles.back}><Text style={styles.backGlyph}>‹</Text></Pressable></Link>
-          <View style={styles.headerCopy}>
-            <Text style={styles.kicker}>NETGUARD · USAGE MONITOR</Text>
-            <Text style={styles.title}>Usage alerts</Text>
-          </View>
-          <View style={styles.headerMark}><Text style={styles.headerMarkText}>◉</Text></View>
-        </View>
+        <AppHeader back liveStatus={monitor?.lastError ? "WARNING" : loading ? "SYNCING" : monitor?.settings.enabled ? "LIVE" : "PAUSED"} />
+        <View style={styles.titleRow}><AppIcon name="notifications-active" color={COLORS.gold} size={22} /><Text style={styles.title}>Usage alerts</Text></View>
         <Text style={styles.subtitle}>Set traffic caps and get local reminders on this device.</Text>
 
         <View style={styles.notice}>
@@ -199,7 +200,7 @@ function UsageAlertsView() {
           />
         </View>
 
-        {error ? <View style={styles.errorCard}><Text style={styles.errorTitle}>Action required</Text><Text style={styles.errorText}>{error}</Text></View> : null}
+        {error ? <ErrorCard title="Action required" message={error} onRetry={retryMonitor} /> : null}
         {savedMessage ? <Text style={styles.savedMessage}>{savedMessage}</Text> : null}
 
         <Pressable
@@ -209,7 +210,7 @@ function UsageAlertsView() {
           accessibilityRole="button"
         >
           <Text style={styles.saveButtonText}>{saving ? "Saving…" : "Save alert settings"}</Text>
-          {saving ? <ActivityIndicator color={palette.white} /> : <Text style={styles.saveArrow}>→</Text>}
+          {saving ? <ActivityIndicator color={palette.white} /> : <AppIcon name="arrow-forward" color={COLORS.white} size={18} />}
         </Pressable>
 
         <View style={styles.sectionHeader}>
@@ -240,12 +241,7 @@ function UsageAlertsView() {
           </Text>
         </View>
 
-        {monitor?.lastError ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Latest monitoring error</Text>
-            <Text style={styles.errorText}>{monitor.lastError}</Text>
-          </View>
-        ) : null}
+        {monitor?.lastError ? <ErrorCard title="Latest monitoring error" message={monitor.lastError} onRetry={retryMonitor} /> : null}
 
         <View style={styles.sectionHeader}>
           <View><Text style={styles.sectionTitle}>Recent alerts</Text><Text style={styles.sectionCaption}>Saved locally on this device</Text></View>
@@ -287,7 +283,7 @@ function SettingSwitch({
       <Switch
         value={value}
         onValueChange={onChange}
-        trackColor={{ false: "rgba(148,163,184,0.28)", true: "rgba(99,102,241,0.8)" }}
+        trackColor={{ false: "rgba(148,163,184,0.28)", true: COLORS.blue }}
         thumbColor={palette.white}
         accessibilityLabel={title}
       />
@@ -341,57 +337,57 @@ export default function Alerts() {
   return <UsageAlertsView />;
 }
 
-const palette = { background: "#080B14", white: "#FFFFFF", muted: "#64748B", secondary: "#94A3B8", indigo: "#6366F1", cyan: "#22D3EE" };
+const palette = { background: COLORS.background, white: COLORS.white, muted: COLORS.secondary, secondary: COLORS.secondary, indigo: COLORS.blue, cyan: COLORS.gold };
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.background },
-  page: { alignItems: "center", padding: 16, paddingTop: 22, paddingBottom: 36 },
+  page: { alignItems: "center", padding: 16, paddingTop: 16, paddingBottom: 36 },
   content: { width: "100%", maxWidth: 820 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 6 },
   header: { flexDirection: "row", alignItems: "center", gap: 12 },
   back: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
   backGlyph: { color: palette.white, fontSize: 28, lineHeight: 31 },
   headerCopy: { flex: 1 },
-  kicker: { color: "#A5B4FC", fontSize: 8, fontWeight: "800", letterSpacing: 1.5 },
-  title: { marginTop: 3, color: palette.white, fontSize: 23, fontWeight: "800" },
+  kicker: { color: COLORS.secondary, fontSize: 12, fontWeight: "800", letterSpacing: 1.2 },
+  title: { marginTop: 0, color: palette.white, fontSize: 23, fontWeight: "800" },
   headerMark: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(99,102,241,0.2)", borderWidth: 1, borderColor: "rgba(129,140,248,0.3)" },
   headerMarkText: { color: palette.cyan, fontWeight: "800", fontSize: 17 },
-  subtitle: { marginTop: 14, marginBottom: 16, color: palette.secondary, fontSize: 11 },
+  subtitle: { marginTop: 14, marginBottom: 16, color: palette.secondary, fontSize: 12 },
   notice: { padding: 14, marginBottom: 14, borderRadius: 15, backgroundColor: "rgba(245,158,11,0.07)", borderWidth: 1, borderColor: "rgba(245,158,11,0.18)" },
-  noticeTitle: { color: "#FCD34D", fontSize: 11, fontWeight: "700" },
-  noticeText: { marginTop: 5, color: palette.secondary, fontSize: 10, lineHeight: 15 },
-  loadingCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 15, marginBottom: 14, borderRadius: 15, backgroundColor: "rgba(255,255,255,0.055)" },
-  loadingText: { color: palette.secondary, fontSize: 10 },
-  card: { paddingHorizontal: 14, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
+  noticeTitle: { color: COLORS.orange, fontSize: 14, fontWeight: "700" },
+  noticeText: { marginTop: 5, color: palette.secondary, fontSize: 12, lineHeight: 18 },
+  loadingCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 16, marginBottom: 14, borderRadius: 16, backgroundColor: COLORS.card },
+  loadingText: { color: palette.secondary, fontSize: 13 },
+  card: { padding: 16, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
   settingRow: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 10 },
   capRow: { minHeight: 68, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   settingCopy: { flex: 1 },
-  settingTitle: { color: "#F1F5F9", fontSize: 11, fontWeight: "700" },
-  settingSubtitle: { marginTop: 4, color: palette.muted, fontSize: 9, lineHeight: 13 },
+  settingTitle: { color: "#F1F5F9", fontSize: 14, fontWeight: "700" },
+  settingSubtitle: { marginTop: 4, color: palette.muted, fontSize: 12, lineHeight: 17 },
   separator: { height: 1, backgroundColor: "rgba(255,255,255,0.08)" },
-  inputWrap: { width: 122, height: 40, flexDirection: "row", alignItems: "center", paddingHorizontal: 9, borderRadius: 10, backgroundColor: "rgba(8,11,20,0.7)", borderWidth: 1, borderColor: "rgba(148,163,184,0.18)" },
-  input: { flex: 1, minWidth: 0, color: palette.white, fontSize: 11, textAlign: "right" },
-  inputUnit: { marginLeft: 6, color: palette.muted, fontSize: 9 },
+  inputWrap: { width: 122, height: 44, flexDirection: "row", alignItems: "center", paddingHorizontal: 9, borderRadius: 10, backgroundColor: COLORS.background, borderWidth: 1, borderColor: COLORS.border },
+  input: { flex: 1, minWidth: 0, color: palette.white, fontSize: 14, textAlign: "right" },
+  inputUnit: { marginLeft: 6, color: palette.muted, fontSize: 12 },
   errorCard: { padding: 13, marginTop: 12, borderRadius: 14, backgroundColor: "rgba(239,68,68,0.08)", borderWidth: 1, borderColor: "rgba(239,68,68,0.2)" },
-  errorTitle: { color: "#FCA5A5", fontSize: 11, fontWeight: "700" },
-  errorText: { marginTop: 4, color: palette.secondary, fontSize: 10, lineHeight: 15 },
-  savedMessage: { marginTop: 10, color: "#6EE7B7", fontSize: 10 },
-  saveButton: { minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, marginTop: 14, borderRadius: 12, backgroundColor: "#252A66", borderWidth: 1, borderColor: "rgba(129,140,248,0.34)" },
-  saveButtonText: { color: palette.white, fontSize: 10, fontWeight: "700" },
-  saveArrow: { color: palette.cyan, fontSize: 17 },
+  errorTitle: { color: COLORS.red, fontSize: 13, fontWeight: "700" },
+  errorText: { marginTop: 4, color: palette.secondary, fontSize: 12, lineHeight: 18 },
+  savedMessage: { marginTop: 10, color: COLORS.green, fontSize: 12 },
+  saveButton: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, marginTop: 14, borderRadius: 12, backgroundColor: COLORS.blue, borderWidth: 1, borderColor: COLORS.blue },
+  saveButtonText: { color: palette.white, fontSize: 14, fontWeight: "700" },
   pressed: { opacity: 0.82 },
   disabled: { opacity: 0.55 },
   sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 22, marginBottom: 10 },
   sectionTitle: { color: palette.white, fontSize: 15, fontWeight: "700" },
-  sectionCaption: { marginTop: 4, color: palette.muted, fontSize: 9, lineHeight: 14 },
-  sampleCount: { color: palette.muted, fontSize: 8 },
+  sectionCaption: { marginTop: 4, color: palette.muted, fontSize: 12, lineHeight: 17 },
+  sampleCount: { color: palette.muted, fontSize: 12 },
   usageRow: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  usageLabel: { color: palette.secondary, fontSize: 10 },
-  usageValue: { color: palette.white, fontSize: 10, fontWeight: "700", textAlign: "right" },
-  permissionText: { marginTop: 10, color: "#CBD5E1", fontSize: 9, lineHeight: 14 },
-  alertCard: { padding: 14, marginBottom: 9, borderRadius: 15, backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
+  usageLabel: { color: palette.secondary, fontSize: 13 },
+  usageValue: { color: palette.white, fontSize: 13, fontWeight: "700", textAlign: "right" },
+  permissionText: { marginTop: 10, color: "#CBD5E1", fontSize: 12, lineHeight: 18 },
+  alertCard: { padding: 16, marginBottom: 10, borderRadius: 16, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
   alertTop: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
-  alertTitle: { flex: 1, color: "#F1F5F9", fontSize: 10, fontWeight: "700" },
-  alertPeriod: { color: "#A5B4FC", fontSize: 8, textTransform: "uppercase" },
-  alertBody: { marginTop: 7, color: palette.secondary, fontSize: 9, lineHeight: 14 },
-  alertTime: { marginTop: 7, color: palette.muted, fontSize: 8 },
-  emptyHistory: { paddingVertical: 18, color: palette.muted, fontSize: 10, textAlign: "center" },
+  alertTitle: { flex: 1, color: "#F1F5F9", fontSize: 14, fontWeight: "700" },
+  alertPeriod: { color: COLORS.secondary, fontSize: 12, textTransform: "uppercase" },
+  alertBody: { marginTop: 7, color: palette.secondary, fontSize: 12, lineHeight: 18 },
+  alertTime: { marginTop: 7, color: palette.muted, fontSize: 12 },
+  emptyHistory: { paddingVertical: 18, color: palette.muted, fontSize: 13, textAlign: "center" },
 });
