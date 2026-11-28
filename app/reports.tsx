@@ -3,24 +3,29 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { Link, Stack } from "expo-router";
 import {
   apiConfig,
+  DeviceRow,
   fetchJson,
   formatBytes,
   parseBandwidth,
   parseDevices,
   type BandwidthInfo,
+  type DeviceInfo,
 } from "./index";
+import { getUnoUsageHistory, recordUnoUsage, type UnoUsageEntry } from "./deviceUsageHistory";
 
 type ReportItem = {
   id: number;
   time: number;
-  devices: number;
+  devices: ReadonlyArray<DeviceInfo>;
   bandwidth: BandwidthInfo;
 };
 
 let localReports: ReadonlyArray<ReportItem> = [];
+let localUsageHistory: ReadonlyArray<UnoUsageEntry> = [];
 
 function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: () => void }) {
   const [reports, setReports] = useState<ReadonlyArray<ReportItem>>(localReports);
+  const [usageHistory, setUsageHistory] = useState<ReadonlyArray<UnoUsageEntry>>(localUsageHistory);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,11 +47,16 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
         ]);
         if (!controller.signal.aborted) {
           const time = Date.now();
+          const devices = parseDevices(devicePayload);
+          const bandwidth = parseBandwidth(bandwidthPayload);
+          if (bandwidth) recordUnoUsage(bandwidth, time);
+          localUsageHistory = getUnoUsageHistory();
+          setUsageHistory(localUsageHistory);
           const sample: ReportItem = {
             id: time,
             time,
-            devices: parseDevices(devicePayload).length,
-            bandwidth: parseBandwidth(bandwidthPayload),
+            devices,
+            bandwidth,
           };
           setReports((current) => {
             localReports = [sample, ...current].slice(0, 20);
@@ -68,6 +78,11 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
       clearInterval(interval);
     };
   }, [refreshKey]);
+  const latestReport = reports[0];
+  const discoveredDevices = latestReport?.devices ?? [];
+  const latestTotal = latestReport?.bandwidth
+    ? latestReport.bandwidth.receivedBytes + latestReport.bandwidth.sentBytes
+    : null;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
@@ -106,38 +121,59 @@ function ReportsView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
             </Pressable>
           </View>
         ) : (
-          reports.map((report) => {
-            const totalBytes = report.bandwidth
-              ? report.bandwidth.receivedBytes + report.bandwidth.sentBytes
-              : null;
-            return (
-              <View key={report.id} style={styles.reportCard}>
-                <View style={styles.reportTop}>
-                  <View>
-                    <Text style={styles.reportKicker}>UNO WLAN SNAPSHOT</Text>
-                    <Text style={styles.reportTime}>
-                      {new Date(report.time).toLocaleString()}
-                    </Text>
-                  </View>
-                  <View style={styles.guardBadge}>
-                    <Text style={styles.guardText}>IN MEMORY · UNSIGNED</Text>
+          <>
+            <View style={styles.reportTop}>
+              <Text style={styles.reportKicker}>LIVE DEVICE REPORTS</Text>
+              <Text style={styles.guardText}>IN MEMORY · UNSIGNED</Text>
+            </View>
+            {discoveredDevices.length > 0 ? discoveredDevices.map((device) => {
+              const isUno = device.identity.category === "uno";
+              const deviceHistory = isUno
+                ? usageHistory.filter((entry) => entry.intervalBytes !== null).slice(-20).reverse()
+                : [];
+              return (
+                <View key={device.id} style={styles.reportCard}>
+                  <DeviceRow device={device} />
+                  <View style={styles.deviceUsage}>
+                    {isUno ? (
+                      <>
+                        <Text style={styles.metricLabel}>UNO-ONLY TOTAL · NOT PER-DEVICE</Text>
+                        <Text style={styles.metricValue}>{formatBytes(latestTotal)}</Text>
+                        <Text style={styles.historyTitle}>Recent Uno wlan0 entries (latest 20, local memory)</Text>
+                        {deviceHistory.length > 0 ? deviceHistory.map((entry) => (
+                          <View key={entry.at} style={styles.historyRow}>
+                            <Text style={styles.historyTime}>{new Date(entry.at).toLocaleTimeString()}</Text>
+                            <Text style={styles.historyBytes}>
+                              {entry.intervalBytes === null ? "No interval" : `Interval ${formatBytes(entry.intervalBytes)}`}
+                            </Text>
+                            <Text style={styles.historyBytes}>
+                              Uno total {formatBytes(entry.receivedBytes + entry.sentBytes)}
+                            </Text>
+                          </View>
+                        )) : (
+                          <Text style={styles.noDeviceUsage}>No data for this device yet.</Text>
+                        )}
+                      </>
+                    ) : (
+                      <Text style={styles.noDeviceUsage}>No data for this device yet.</Text>
+                    )}
                   </View>
                 </View>
-                <View style={styles.metrics}>
-                  <View style={styles.metric}>
-                    <Text style={styles.metricValue}>{report.devices}</Text>
-                    <Text style={styles.metricLabel}>DISCOVERED</Text>
-                  </View>
-                  <View style={styles.metricDivider} />
-                  <View style={styles.metric}>
-                    <Text style={styles.metricValue}>{formatBytes(totalBytes)}</Text>
-                    <Text style={styles.metricLabel}>UNO WLAN TOTAL</Text>
-                  </View>
-                </View>
+              );
+            }) : (
+              <View style={styles.stateCard}>
+                <Text style={styles.stateTitle}>No real devices reported</Text>
+                <Text style={styles.stateText}>Per-device sections appear only for devices returned by the live discovery API.</Text>
               </View>
-            );
-          })
+            )}
+          </>
         )}
+
+        <View style={styles.combinedTotal}>
+          <Text style={styles.combinedTotalText}>
+            Combined Total (Uno-only) = {formatBytes(latestTotal)}
+          </Text>
+        </View>
 
         <Pressable onPress={onRefresh} style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}>
           <Text style={styles.refreshGlyph}>↻</Text>
@@ -182,6 +218,14 @@ const styles = StyleSheet.create({
   inlineButton: { paddingHorizontal: 15, paddingVertical: 10, marginTop: 16, borderRadius: 11, backgroundColor: "rgba(99,102,241,0.2)", borderWidth: 1, borderColor: "rgba(129,140,248,0.3)" },
   inlineButtonText: { color: "#C7D2FE", fontSize: 10, fontWeight: "700" },
   reportCard: { padding: 16, marginBottom: 12, borderRadius: 19, backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
+  deviceUsage: { paddingTop: 10, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.08)" },
+  historyTitle: { marginTop: 11, marginBottom: 5, color: palette.secondary, fontSize: 9, fontWeight: "700" },
+  historyRow: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.06)" },
+  historyTime: { color: palette.muted, fontSize: 8 },
+  historyBytes: { marginTop: 3, color: "#CBD5E1", fontSize: 9 },
+  noDeviceUsage: { paddingVertical: 11, color: palette.muted, fontSize: 10 },
+  combinedTotal: { padding: 14, marginBottom: 12, borderRadius: 14, backgroundColor: "rgba(34,211,238,0.07)", borderWidth: 1, borderColor: "rgba(34,211,238,0.2)" },
+  combinedTotalText: { color: "#A5F3FC", fontSize: 11, fontWeight: "700" },
   reportTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 9, paddingBottom: 15 },
   reportKicker: { color: "#A5B4FC", fontSize: 8, fontWeight: "800", letterSpacing: 1.2 },
   reportTime: { marginTop: 6, color: palette.secondary, fontSize: 10 },

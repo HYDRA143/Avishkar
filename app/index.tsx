@@ -8,13 +8,29 @@ import {
   View,
 } from "react-native";
 import { Link, Stack } from "expo-router";
+import { recordUnoUsage } from "./deviceUsageHistory";
 
 export type DeviceInfo = {
   id: string;
-  name: string;
-  avatarLetter: string;
   ipAddress: string;
   macAddress: string;
+  reachable: boolean | null;
+  identity: DeviceIdentity;
+};
+
+export type DeviceCategory = "uno" | "gateway" | "phone" | "unknown";
+export type DeviceType =
+  | "Uno Gateway Monitor"
+  | "Gateway / Hotspot Router"
+  | "Phone"
+  | "Unknown Client";
+
+export type DeviceIdentity = {
+  name: string;
+  type: DeviceType;
+  iconLetter: string;
+  source: string;
+  category: DeviceCategory;
 };
 
 export type BandwidthInfo = {
@@ -87,9 +103,86 @@ const entriesFrom = (payload: unknown, key: string): ReadonlyArray<unknown> => {
   return Array.isArray(entries) ? entries : [];
 };
 
-const getDeviceName = (ipAddress: string, reportedName: string): { name: string; avatarLetter: string } => {
-  const name = reportedName || (ipAddress ? `Device ${ipAddress}` : "Discovered device");
-  return { name, avatarLetter: name.charAt(0).toUpperCase() || "?" };
+const KNOWN_DEVICE_IDENTITIES: ReadonlyArray<{
+  ip: string;
+  mac: string;
+  identity: DeviceIdentity;
+}> = [
+  {
+    ip: "192.168.137.65",
+    mac: "14:b5:cd:f2:0a:19",
+    identity: {
+      name: "NETGUARD-UNO-01",
+      type: "Uno Gateway Monitor",
+      iconLetter: "U",
+      source: "Main Network - Laptop Hotspot",
+      category: "uno",
+    },
+  },
+  {
+    ip: "192.168.137.1",
+    mac: "56:bb:b5:35:8f:ba",
+    identity: {
+      name: "GATEWAY-HOTSPOT-01",
+      type: "Gateway / Hotspot Router",
+      iconLetter: "G",
+      source: "Main Network - 192.168.137.1",
+      category: "gateway",
+    },
+  },
+  {
+    ip: "192.168.137.29",
+    mac: "0c:f3:46:e6:95:d9",
+    identity: {
+      name: "PHONE-01",
+      type: "Phone",
+      iconLetter: "P",
+      source: "Main Network - Laptop Hotspot",
+      category: "phone",
+    },
+  },
+];
+
+export const getDeviceIdentity = (ip: string, mac: string): DeviceIdentity => {
+  const known = KNOWN_DEVICE_IDENTITIES.find((device) =>
+    device.ip === ip.trim() && device.mac === mac.trim().toLowerCase()
+  );
+  if (known) return known.identity;
+
+  const lastOctet = ip.trim().split(".").at(-1) ?? "";
+  return {
+    name: lastOctet ? `DEVICE-${lastOctet}` : "DEVICE-UNKNOWN",
+    type: "Unknown Client",
+    iconLetter: lastOctet.charAt(0) || "?",
+    source: "Main Network",
+    category: "unknown",
+  };
+};
+
+export const deviceCategoryColor = (category: DeviceCategory): { background: string; border: string; text: string } => {
+  switch (category) {
+    case "uno":
+      return { background: "rgba(59,130,246,0.18)", border: "rgba(96,165,250,0.42)", text: "#93C5FD" };
+    case "gateway":
+      return { background: "rgba(249,115,22,0.16)", border: "rgba(251,146,60,0.4)", text: "#FDBA74" };
+    case "phone":
+      return { background: "rgba(34,197,94,0.16)", border: "rgba(74,222,128,0.4)", text: "#86EFAC" };
+    case "unknown":
+      return { background: "rgba(148,163,184,0.13)", border: "rgba(148,163,184,0.3)", text: "#CBD5E1" };
+  }
+};
+
+export const remoteSourceLabel = (baseUrl: string): string => {
+  if (!baseUrl) return "Remote source unavailable";
+  try {
+    const url = new URL(baseUrl);
+    const source = url.hostname.endsWith(".trycloudflare.com")
+      ? "Cloudflare Tunnel"
+      : "Remote API";
+    return `${source} - ${url.toString().replace(/\/$/, "")}`;
+  } catch {
+    return `Remote API - ${baseUrl}`;
+  }
 };
 
 export const parseDevices = (payload: unknown): ReadonlyArray<DeviceInfo> =>
@@ -98,13 +191,13 @@ export const parseDevices = (payload: unknown): ReadonlyArray<DeviceInfo> =>
     if (!record) return [];
     const ipAddress = stringField(record, "ip_address", "ip", "address");
     const macAddress = stringField(record, "mac_address", "mac");
-    const reportedName = stringField(record, "name", "hostname", "device_name");
-    if (!ipAddress && !macAddress && !reportedName) return [];
+    if (!ipAddress && !macAddress) return [];
     return [{
-      id: `${ipAddress}-${macAddress}-${reportedName}`,
-      ...getDeviceName(ipAddress, reportedName),
+      id: ipAddress || macAddress,
       ipAddress,
       macAddress,
+      reachable: typeof record.reachable === "boolean" ? record.reachable : null,
+      identity: getDeviceIdentity(ipAddress, macAddress),
     }];
   });
 
@@ -137,6 +230,46 @@ export const parseBandwidth = (payload: unknown): BandwidthInfo => {
   const interfaceName = stringField(sourceRecord ?? {}, "name", "interface", "iface") || "wlan0";
   return { interfaceName, ...counters };
 };
+
+export function DeviceRow({ device, divider = false }: { device: DeviceInfo; divider?: boolean }) {
+  const color = deviceCategoryColor(device.identity.category);
+  const row = (
+    <Pressable
+      style={({ pressed }) => [
+        styles.deviceRow,
+        divider && styles.rowDivider,
+        { backgroundColor: color.background, borderColor: color.border },
+        pressed && styles.deviceRowPressed,
+      ]}
+      accessibilityRole={device.ipAddress ? "button" : undefined}
+      accessibilityLabel={`${device.identity.name}, ${device.identity.type}`}
+      disabled={!device.ipAddress}
+    >
+      <View style={[styles.deviceAvatar, { backgroundColor: color.background, borderColor: color.border }]}>
+        <Text style={[styles.deviceAvatarText, { color: color.text }]}>{device.identity.iconLetter}</Text>
+      </View>
+      <View style={styles.deviceCopy}>
+        <View style={styles.deviceTitleRow}>
+          <Text style={styles.deviceName}>{device.identity.name}</Text>
+          <Text style={[styles.deviceStatus, device.reachable === true && styles.deviceOnline, device.reachable === false && styles.deviceOffline]}>
+            {device.reachable === null ? "Status unavailable" : device.reachable ? "Online" : "Offline"}
+          </Text>
+        </View>
+        <Text style={styles.deviceAddress}>{device.ipAddress || "IP not reported"}</Text>
+        <Text style={styles.deviceMac}>{device.macAddress || "MAC not reported"}</Text>
+        <Text style={[styles.deviceType, { color: color.text }]}>{device.identity.type}</Text>
+        <Text style={styles.deviceSource}>{device.identity.source}</Text>
+      </View>
+      {device.ipAddress ? <Text style={styles.deviceArrow}>›</Text> : null}
+    </Pressable>
+  );
+  if (!device.ipAddress) return row;
+  return (
+    <Link href={{ pathname: "/device/[id]", params: { id: device.ipAddress } }} asChild>
+      {row}
+    </Link>
+  );
+}
 
 const speedForInterval = (
   current: NonNullable<BandwidthInfo>,
@@ -217,6 +350,7 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
         const guard = asRecord(statusRecord?.guard);
         const currentBandwidth = parseBandwidth(bandwidth);
         const now = Date.now();
+        if (currentBandwidth) recordUnoUsage(currentBandwidth, now);
         const sample = currentBandwidth
           ? speedForInterval(currentBandwidth, previousBandwidth.current, now)
           : null;
@@ -269,6 +403,11 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
     { href: "/alerts" as const, glyph: "◉", title: "Usage alerts", subtitle: "Set hourly, daily, and weekly caps" },
     { href: "/settings" as const, glyph: "⚙", title: "Settings", subtitle: "Manage local preferences" },
   ];
+  const { base } = apiConfig();
+  const gateway = data.devices.find((device) => device.identity.category === "gateway");
+  const networkSource = gateway
+    ? `Main Network ${gateway.ipAddress}`
+    : "Main Network · gateway not identified";
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
@@ -362,18 +501,12 @@ function Dashboard({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: (
           </View>
           <View style={styles.liveTag}><View style={styles.liveDot} /><Text style={styles.liveText}>LIVE</Text></View>
         </View>
+        <View style={styles.sourceBadge}>
+          <Text style={styles.sourceBadgeText}>Source: {networkSource} | Remote: {remoteSourceLabel(base)}</Text>
+        </View>
         <View style={styles.card}>
           {data.devices.length > 0 ? data.devices.map((device, index) => (
-            <View key={device.id} style={[styles.deviceRow, index > 0 && styles.rowDivider]}>
-              <View style={styles.deviceAvatar}>
-                <Text style={styles.deviceAvatarText}>{device.avatarLetter}</Text>
-              </View>
-              <View style={styles.deviceCopy}>
-                <Text style={styles.deviceName}>{device.name}</Text>
-                <Text style={styles.deviceAddress}>{device.ipAddress || "IP not reported"}</Text>
-                <Text style={styles.deviceMac}>{device.macAddress || "MAC not reported"}</Text>
-              </View>
-            </View>
+            <DeviceRow key={device.id} device={device} divider={index > 0} />
           )) : (
             <View style={styles.emptyState}>
               <View style={styles.emptyIcon}><Text style={styles.emptyGlyph}>⌁</Text></View>
@@ -590,14 +723,24 @@ const styles = StyleSheet.create({
   liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: palette.green },
   liveText: { color: "#6EE7B7", fontSize: 8, fontWeight: "800", letterSpacing: 0.7 },
   card: { paddingHorizontal: 14, borderRadius: 18, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, shadowColor: "#000", shadowOpacity: 0.14, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 3 },
-  deviceRow: { minHeight: 76, flexDirection: "row", alignItems: "center", gap: 11, paddingVertical: 12 },
+  deviceRow: { minHeight: 90, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 10, paddingVertical: 12, marginVertical: 4, borderRadius: 14, borderWidth: 1 },
+  deviceRowPressed: { opacity: 0.78 },
   rowDivider: { borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.07)" },
-  deviceAvatar: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(99,102,241,0.2)", borderWidth: 1, borderColor: "rgba(129,140,248,0.24)" },
+  deviceAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", borderWidth: 1 },
   deviceAvatarText: { color: "#C7D2FE", fontSize: 17, fontWeight: "700" },
   deviceCopy: { flex: 1, minWidth: 0 },
+  deviceTitleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 7 },
   deviceName: { color: "#F1F5F9", fontSize: 12, fontWeight: "700" },
   deviceAddress: { marginTop: 4, color: palette.secondary, fontSize: 10 },
   deviceMac: { marginTop: 3, color: palette.muted, fontSize: 9 },
+  deviceType: { marginTop: 4, fontSize: 9, fontWeight: "700" },
+  deviceSource: { marginTop: 3, color: palette.muted, fontSize: 8 },
+  deviceStatus: { color: palette.muted, fontSize: 8, fontWeight: "700" },
+  deviceOnline: { color: "#6EE7B7" },
+  deviceOffline: { color: "#FCA5A5" },
+  deviceArrow: { color: palette.secondary, fontSize: 22 },
+  sourceBadge: { padding: 11, marginBottom: 10, borderRadius: 12, backgroundColor: "rgba(99,102,241,0.1)", borderWidth: 1, borderColor: "rgba(129,140,248,0.22)" },
+  sourceBadgeText: { color: "#C7D2FE", fontSize: 9, lineHeight: 14 },
   emptyState: { minHeight: 158, alignItems: "center", justifyContent: "center", paddingVertical: 20 },
   emptyIcon: { width: 40, height: 40, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(99,102,241,0.15)" },
   emptyGlyph: { color: "#A5B4FC", fontSize: 23 },

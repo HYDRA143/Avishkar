@@ -3,17 +3,19 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { Link, Stack } from "expo-router";
 import {
   apiConfig,
+  DeviceRow,
   fetchJson,
   formatBytes,
   parseBandwidth,
   parseDevices,
+  type DeviceInfo,
   type BandwidthInfo,
 } from "./index";
 
 type StatusData = {
   loading: boolean;
   error: string | null;
-  devices: number | null;
+  devices: ReadonlyArray<DeviceInfo>;
   bandwidth: BandwidthInfo;
   fetchSucceeded: boolean;
 };
@@ -22,7 +24,7 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
   const [state, setState] = useState<StatusData>({
     loading: true,
     error: null,
-    devices: null,
+    devices: [],
     bandwidth: null,
     fetchSucceeded: false,
   });
@@ -35,7 +37,7 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
         setState({
           loading: false,
           error: "Mobile API configuration is missing",
-          devices: null,
+          devices: [],
           bandwidth: null,
           fetchSucceeded: false,
         });
@@ -43,15 +45,16 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
       }
       setState((current) => ({ ...current, error: null }));
       try {
-        const [devices, usage] = await Promise.all([
+        const [devicePayload, usage] = await Promise.all([
           fetchJson(`${base}/api/devices`, key, controller.signal),
           fetchJson(`${base}/api/usage`, key, controller.signal),
         ]);
         if (controller.signal.aborted) return;
+        const devices = parseDevices(devicePayload);
         setState({
           loading: false,
           error: null,
-          devices: parseDevices(devices).length,
+          devices,
           bandwidth: parseBandwidth(usage),
           fetchSucceeded: true,
         });
@@ -60,7 +63,7 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
           setState({
             loading: false,
             error: caught instanceof Error ? caught.message : "Unable to load system status",
-            devices: null,
+            devices: [],
             bandwidth: null,
             fetchSucceeded: false,
           });
@@ -81,8 +84,8 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
   const rows = [
     {
       title: "Discovered devices",
-      value: state.loading ? "Checking…" : state.error ? "Unavailable" : state.devices === null ? "No data" : `${state.devices} found`,
-      good: state.fetchSucceeded && state.devices !== null,
+      value: state.loading ? "Checking…" : state.error ? "Unavailable" : `${state.devices.length} found`,
+      good: state.fetchSucceeded,
     },
     {
       title: "Uno wlan0 total",
@@ -128,14 +131,14 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
                   ? "Checking…"
                   : state.error
                     ? "Status unavailable"
-                    : state.devices && state.devices > 0
+                    : state.devices.length > 0
                       ? "Devices detected"
                       : "No devices detected"}
               </Text>
               <Text style={styles.heroCaption}>Discovered devices do not include individual usage totals.</Text>
             </View>
             {state.loading ? <ActivityIndicator color={palette.cyan} /> : (
-              <View style={[styles.heroDot, state.devices !== null && state.devices > 0 && styles.heroDotOnline]} />
+              <View style={[styles.heroDot, state.devices.length > 0 && styles.heroDotOnline]} />
             )}
           </View>
           <View style={styles.heroRule} />
@@ -159,6 +162,17 @@ function StatusView({ refreshKey, onRefresh }: { refreshKey: number; onRefresh: 
                   row.good === false && styles.rowDotBad,
                 ]} />
                 <Text style={styles.rowTitle}>{row.title}</Text>
+              </View>
+              <View style={styles.sectionHeader}>
+                <View>
+                  <Text style={styles.sectionTitle}>Device identities</Text>
+                  <Text style={styles.sectionCaption}>Names use exact IP and MAC matches from the live response.</Text>
+                </View>
+              </View>
+              <View style={styles.deviceList}>
+                {state.devices.length > 0
+                  ? state.devices.map((device, index) => <DeviceRow key={device.id} device={device} divider={index > 0} />)
+                  : <Text style={styles.noDevices}>{state.loading ? "Loading live device list…" : state.error ? "Device discovery unavailable." : "No real devices reported."}</Text>}
               </View>
               <Text style={[
                 styles.rowValue,
@@ -221,6 +235,8 @@ const styles = StyleSheet.create({
   liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#10B981" },
   liveText: { color: "#6EE7B7", fontSize: 8, fontWeight: "800", letterSpacing: 0.7 },
   statusCard: { paddingHorizontal: 14, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.055)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
+  deviceList: { padding: 8, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.04)", borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" },
+  noDevices: { padding: 14, color: palette.muted, fontSize: 10 },
   statusRow: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   rowDivider: { borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.07)" },
   rowLabel: { flexDirection: "row", alignItems: "center", gap: 9 },

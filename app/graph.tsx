@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Link, Stack } from "expo-router";
-import { apiConfig, fetchJson, formatBytes, formatSpeed, parseBandwidth } from "./index";
+import {
+  apiConfig,
+  DeviceRow,
+  fetchJson,
+  formatBytes,
+  formatSpeed,
+  parseBandwidth,
+  parseDevices,
+} from "./index";
+import { recordUnoUsage } from "./deviceUsageHistory";
 
 type Traffic = { down: number; up: number } | null;
 type SpeedPoint = { down: number; up: number; time: number };
@@ -11,6 +20,7 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
   const [traffic, setTraffic] = useState<Traffic>(null);
   const [speedHistory, setSpeedHistory] = useState<ReadonlyArray<SpeedPoint>>([]);
   const [currentSpeed, setCurrentSpeed] = useState<SpeedPoint | null>(null);
+  const [devices, setDevices] = useState<ReturnType<typeof parseDevices>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const previousBandwidth = useRef<PreviousBandwidth | null>(null);
@@ -26,13 +36,19 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
       }
       setError(null);
       try {
-        const body = await fetchJson(`${base}/api/usage`, key, controller.signal);
+        const [devicePayload, body] = await Promise.all([
+          fetchJson(`${base}/api/devices`, key, controller.signal),
+          fetchJson(`${base}/api/usage`, key, controller.signal),
+        ]);
         if (!controller.signal.aborted) {
           const parsed = parseBandwidth(body);
+          const discoveredDevices = parseDevices(devicePayload);
+          setDevices(discoveredDevices);
           const counters = parsed
             ? { down: parsed.receivedBytes, up: parsed.sentBytes }
             : null;
           const now = Date.now();
+          if (parsed) recordUnoUsage(parsed, now);
           const previous = previousBandwidth.current;
           const seconds = previous ? (now - previous.time) / 1000 : 0;
           const point = counters && previous && seconds > 0
@@ -88,6 +104,12 @@ function GraphScreen({ refreshKey, onRefresh }: { refreshKey: number; onRefresh:
         </View>
 
         <Text style={styles.subtitle}>Uno wlan0 interface counters only; discovered phones and laptops are not individually measured.</Text>
+        <View style={styles.devicePanel}>
+          <Text style={styles.devicePanelTitle}>Discovered devices</Text>
+          {devices.length > 0
+            ? devices.map((device, index) => <DeviceRow key={device.id} device={device} divider={index > 0} />)
+            : <Text style={styles.devicePanelEmpty}>No real devices reported yet.</Text>}
+        </View>
         {error ? (
           <View style={styles.errorCard}>
             <Text style={styles.errorTitle}>Usage unavailable</Text>
@@ -209,6 +231,9 @@ const styles = StyleSheet.create({
   headerMark: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(99,102,241,0.2)", borderWidth: 1, borderColor: "rgba(129,140,248,0.3)" },
   headerMarkText: { color: palette.cyan, fontWeight: "800", fontSize: 17 },
   subtitle: { marginTop: 14, marginBottom: 19, color: palette.secondary, fontSize: 11 },
+  devicePanel: { padding: 12, marginBottom: 14, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.04)", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  devicePanelTitle: { marginBottom: 5, color: "#E2E8F0", fontSize: 11, fontWeight: "700" },
+  devicePanelEmpty: { paddingVertical: 10, color: palette.muted, fontSize: 9 },
   errorCard: { padding: 13, marginBottom: 14, borderRadius: 14, backgroundColor: "rgba(239,68,68,0.08)", borderWidth: 1, borderColor: "rgba(239,68,68,0.2)" },
   errorTitle: { color: "#FCA5A5", fontSize: 12, fontWeight: "700" },
   errorText: { marginTop: 4, color: palette.secondary, fontSize: 10, lineHeight: 15 },
